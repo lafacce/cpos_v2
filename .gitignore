@@ -2,3 +2,4 @@
 __pycache__/
 /demo/logs/*
 !/demo/logs/.gitkeep
+cpos/.idea/*
