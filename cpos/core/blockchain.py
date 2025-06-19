@@ -42,11 +42,12 @@ def sighandler(*args):
     PROGRAM_INTERRUPTED = True
 
 class BlockChainParameters:
-    def __init__(self, round_time: float, tolerance: int, tau: int, total_stake=10):
+    def __init__(self, round_time: float, tolerance: int, tau: int, total_stake=10, period_size=32):
         self.round_time = round_time
         self.tolerance = tolerance
         self.tau = tau
         self.total_stake = total_stake
+        self.period_size = period_size
         pass
 
 
@@ -77,6 +78,7 @@ class BlockChain:
         self.forks_detected = 0 
 
         self.current_round: int = 0
+        self.current_period: int = 0
         self.confirmation_delays = []
         self.update_round()
 
@@ -90,8 +92,12 @@ class BlockChain:
             return
 
         self.current_round = round
-
         self.logger.info(f"starting round {round}")
+
+        if (round % self.parameters.period_size) == 0:
+            self.current_period += 1
+            self.logger.info(f"starting period {self.current_period}")
+
         self._dump_block_hashes()
 
         # verify whether we can confirm the oldest unconfirmed block or
@@ -224,7 +230,7 @@ class BlockChain:
 
         # in case there is already a block present at block.index
         if self.number_of_blocks() > block.index:
-            if block.proof_hash <= self.get_proof_hash_of_block(block.index):
+            if block.proof_hash >= self.get_proof_hash_of_block(block.index):
                 self._log_failed_insertion(block, f"smaller proof_hash")
                 return False
         

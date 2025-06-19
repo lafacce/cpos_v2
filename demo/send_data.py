@@ -50,7 +50,7 @@ def send_data():
                     print("Trying to send SCP again!")
                 else:
                     print("Failed to send data through SCP")
-            finally
+            finally:
                 if scp:
                     scp.close()
                 if ssh:

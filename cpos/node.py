@@ -88,9 +88,10 @@ class Node:
         tolerance = int(os.getenv("TOLERANCE", 2))
         tau = int(os.getenv("TAU", 10))
         total_stake = int(os.getenv("TOTAL_STAKE", 25))
+        self.period_size = int(os.environ.get("PERIOD_SIZE", "10"))
 
-        self.logger.info("PARAMETERS:    " + f" STAKE: {total_stake}      TAU: {tau}     RT:{round_time}     MIN_PEER: {self.minimum_num_peers}     MAX_PEER:{self.maximum_num_peers}    CREATED: {self.broadcast_created_block}     RECEIVED: {self.broadcast_received_block}")
-        params = BlockChainParameters(round_time=round_time, tolerance=tolerance, tau=tau, total_stake=total_stake)
+        self.logger.info("PARAMETERS:    " + f" STAKE: {total_stake}      TAU: {tau}     RT:{round_time}     MIN_PEER: {self.minimum_num_peers}     MAX_PEER:{self.maximum_num_peers}    CREATED: {self.broadcast_created_block}     RECEIVED: {self.broadcast_received_block} PERIOD_SIZE: {self.period_size}")
+        params = BlockChainParameters(round_time=round_time, tolerance=tolerance, tau=tau, total_stake=total_stake, period_size=self.period_size)
         self.bc: BlockChain = BlockChain(params, genesis=genesis, node_id=self.id)
         self.state = State.LISTENING
         self.missed_blocks: list[tuple[Block, bytes]] = []
@@ -238,6 +239,8 @@ class Node:
     def loop(self):
         round = self.bc.genesis.timestamp
         initial_round = self.bc.current_round
+        period = 0
+        self.logger.info(f"initial round {initial_round}")
         while True:
             if self.config.total_rounds is not None and self.bc.current_round >= initial_round + self.config.total_rounds:
                 self.should_halt = True
@@ -245,7 +248,6 @@ class Node:
             if self.should_halt:
                 self.logger.error("halted")
                 break
-            
             # if we detect a fork, resync with a node that sent a random missed block
             if self.state == State.LISTENING and self.bc.fork_detected and self.missed_blocks:
                 stopResyncing = False
@@ -268,6 +270,10 @@ class Node:
             self.bc.update_round()
             # on round change:
             if round != self.bc.current_round:
+
+                if (round % self.bc.parameters.period_size) == 0:
+                    self.logger.info(f"TODO: get new stake value")
+
                 self.logger.debug(f"state: {self.state}")
                 self.network.notify_beacon() #  Notifies beacon this node is still alive and connected to the network
                 # TODO: make the log_dir configurable (and maybe

@@ -27,7 +27,7 @@ services:
       - BEACON_IP=beacon
       - BEACON_PORT=9000
       - PORT=8888
-      - NUMBER_OF_ROUNDS=30
+      - NUMBER_OF_ROUNDS=11
       - ROUND_TIME=20
       - TOLERANCE=2
       - TAU=3
@@ -37,6 +37,7 @@ services:
       - MINIMUM_NUM_PEERS=3              # minimum number of peers a node can have
       - BROADCAST_CREATED_BLOCK=true     
       - BROADCAST_RECEIVED_BLOCK=true
+      - PERIOD_SIZE=5                        # set number of rounds to get new stake value
 
       # Be careful not to commit the following information to github
       - SSH_ADDRESS=
@@ -70,7 +71,8 @@ services:
       - MINIMUM_NUM_PEERS=3              # minimum number of peers a node can have
       - BROADCAST_CREATED_BLOCK=false
       - BROADCAST_RECEIVED_BLOCK=false
-
+      - PERIOD_SIZE=5                        # set number of rounds to get new stake value
+      
       # Be careful not to commit the following information to github
       - SSH_ADDRESS=
       - SSH_PASSWORD=

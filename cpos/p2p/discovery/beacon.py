@@ -169,9 +169,6 @@ class Beacon:
         if self.current_round % 3 == 0:
             self.manage_peer_forgetting()
 
-
-
-
 def main():
     b = Beacon(port=8888)
 
