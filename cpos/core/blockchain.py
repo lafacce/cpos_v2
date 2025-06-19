@@ -224,7 +224,7 @@ class BlockChain:
 
         # in case there is already a block present at block.index
         if self.number_of_blocks() > block.index:
-            if block.proof_hash <= self.get_proof_hash_of_block(block.index):
+            if block.proof_hash >= self.get_proof_hash_of_block(block.index):
                 self._log_failed_insertion(block, f"smaller proof_hash")
                 return False
         
