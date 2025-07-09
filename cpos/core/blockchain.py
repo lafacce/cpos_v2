@@ -87,6 +87,7 @@ class BlockChain:
         genesis_time = self.genesis.timestamp
         delta_t = current_time - genesis_time
         round = int(delta_t / self.parameters.round_time)
+        period = int(round / self.parameters.period_size)
 
         if self.current_round == round:
             return
@@ -94,8 +95,8 @@ class BlockChain:
         self.current_round = round
         self.logger.info(f"starting round {round}")
 
-        if (round % self.parameters.period_size) == 0:
-            self.current_period += 1
+        if period > self.current_period :
+            self.current_period = period
             self.logger.info(f"starting period {self.current_period}")
 
         self._dump_block_hashes()
