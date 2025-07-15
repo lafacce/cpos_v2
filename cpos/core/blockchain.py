@@ -5,6 +5,7 @@ import mysql.connector
 import numpy as np
 import os
 import signal
+import socket
 from time import sleep
 from cpos.core.block import Block, GenesisBlock
 from cpos.core.transactions import TransactionList, MockTransactionList
@@ -21,8 +22,9 @@ HOST = "localhost"
 USER = "CPoS"
 PASSWORD = "CPoSPW"
 DATABASE = "localBlockchain"
-PROGRAM_INTERRUPTED = False
+DATABASE_STAKE = "mempool"
 
+PROGRAM_INTERRUPTED = False
 try:
     connection = mysql.connector.connect(
         host=HOST,
@@ -33,6 +35,20 @@ try:
 
     if connection.is_connected():
         print("Connected to the MariaDB database!")
+
+except mysql.connector.Error as err:
+    print(f"Error: {err}")
+
+try:
+    connection_mempool = mysql.connector.connect(
+        host=HOST,
+        user=USER,
+        password=PASSWORD,
+        database=DATABASE_STAKE
+    )
+
+    if connection_mempool.is_connected():
+        print("Connected to the mempool database!")
 
 except mysql.connector.Error as err:
     print(f"Error: {err}")
@@ -80,7 +96,10 @@ class BlockChain:
         self.current_round: int = 0
         self.current_period: int = 0
         self.confirmation_delays = []
+        self.stake_id: str = self.get_local_ip() #Here we should pass pubkey of node. Using IP for now
+        self.current_stake: int = 1
         self.update_round()
+
 
     def update_round(self):
         current_time = time()
@@ -98,6 +117,8 @@ class BlockChain:
         if period > self.current_period :
             self.current_period = period
             self.logger.info(f"starting period {self.current_period}")
+            stake = self.get_stake(self.stake_id)
+            self.logger.info(f"new stake value = {stake}")
 
         self._dump_block_hashes()
 
@@ -157,7 +178,7 @@ class BlockChain:
     # TODO: these two are stubs, we need to implement an actual search
     # through the blockchain transactions later
     def lookup_node_stake(self, node_id: bytes) -> int:
-        return 1
+        return self.current_stake
     def lookup_total_stake(self) -> int:
         return self.parameters.total_stake
 
@@ -187,7 +208,7 @@ class BlockChain:
         return winning_tickets
 
     def _log_failed_insertion(self, block: Block, reason: str):
-        self.logger.info(f"discarding block {block.hash.hex()} ({reason})")
+        self.logger.debug(f"discarding block {block.hash.hex()} ({reason})")
 
     def set_genesis_block(self, genesis: GenesisBlock) -> bool: # UNUSED
         cursor = connection.cursor()
@@ -481,3 +502,37 @@ class BlockChain:
         block_info = cursor.fetchone()
         cursor.close()
         return self.compose_block(block_info)
+
+    def get_stake(self,stake_id : str) -> int: # UNUSED
+        connection_mempool.commit()
+        cursor_mempool = connection_mempool.cursor()
+        try:
+            sql = "SELECT value FROM stakes WHERE stake_id = %s"
+            cursor_mempool.execute(sql, (stake_id,))
+            row = cursor_mempool.fetchone()
+            if row is None:
+                self.logger.warning("No stake for this node in mempool")
+                self.current_stake = -1
+            else:
+                value = int(row[0])
+                self.current_stake = value
+        except Exception as err:
+            self.logger.error("Error getting stake: ", err)
+        finally:
+            cursor_mempool.close()
+
+        return self.current_stake
+
+    def get_local_ip(self) -> str:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # doesn't actually send packets, just helps us pick the right interface
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+        except Exception:
+            return "127.0.0.1"
+        finally:
+            sock.close()
+
+
+

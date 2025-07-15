@@ -3,10 +3,13 @@ echo "starting container..."
 # Database related commands
 service mariadb start
 echo "initializing mempool"
-mysql -e "CREATE USER 'CPoS'@localhost IDENTIFIED BY 'CPoSPW';"
-mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'CPoS'@'localhost';"
+#mysql -e "CREATE USER 'CPoS'@localhost IDENTIFIED BY 'CPoSPW';"
+mysql -e "CREATE USER 'CPoS'@'%' IDENTIFIED BY 'CPoSPW';"
+#mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'CPoS'@'localhost';"
+mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'CPoS'@'%';"
 mysql -e "CREATE DATABASE mempool;"
 mysql mempool < cpos/db/mempool.sql
+mysql mempool < cpos/db/stakes.sql
 echo "initializing local blockchain database"
 mysql -e "CREATE DATABASE localBlockchain;"
 mysql localBlockchain < cpos/db/localBlockchain.sql

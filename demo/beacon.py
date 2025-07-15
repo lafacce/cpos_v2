@@ -1,8 +1,11 @@
 import argparse
 import signal
 from time import sleep
+import threading
+import time
 
 from cpos.p2p.discovery.beacon import Beacon
+from demo.update_stake import update_stake
 
 def main():
     parser = argparse.ArgumentParser()
@@ -17,6 +20,9 @@ def main():
 
     signal.signal(signal.SIGINT, sighandler)
     signal.signal(signal.SIGTERM, sighandler)
+    
+    thread_update_stake = threading.Thread(target=update_stake)
+    thread_update_stake.start()
 
     try:
         beacon.start()

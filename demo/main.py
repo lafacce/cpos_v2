@@ -40,7 +40,7 @@ def main():
     # Separate thread for mempool populator
     thread = threading.Thread(target=populate_mempool)
     thread.start()
-
+    
     try:
         node.greet_peers()
         time.sleep(5)

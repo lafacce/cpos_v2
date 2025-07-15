@@ -10,6 +10,8 @@ COPY . /cpos
 
 # RUN chown -R root "/cpos"
 
+COPY my-custom.cnf /etc/mysql/mariadb.conf.d/99-custom.cnf
+
 RUN apt-get update && apt-get install -y default-mysql-server && poetry install
 
 EXPOSE 3306

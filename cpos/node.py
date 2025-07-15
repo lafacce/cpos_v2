@@ -200,12 +200,12 @@ class Node:
         round = self.bc.current_round
         tolerance = self.bc.parameters.tolerance
         if block.round not in range(round, round + tolerance + 1):
-            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (outside of tolerance range)")
+            self.logger.debug(f"discarding block {block.hash.hex()[0:8]} (outside of tolerance range)")
             return False
         if block.owner_pubkey == self.pubkey.public_bytes_raw():
-            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (produced by itself)")
+            self.logger.debug(f"discarding block {block.hash.hex()[0:8]} (produced by itself)")
             return False
-        self.logger.info(f"trying to insert {block}")
+        self.logger.debug(f"trying to insert {block}")
         self.received_blocks += 1
         block_in_blockchain = self.bc.block_in_blockchain(block)
         block_in_missed_blocks = any(tup[0].hash.hex() == block.hash.hex() for tup in self.missed_blocks)
@@ -239,7 +239,7 @@ class Node:
     def loop(self):
         round = self.bc.genesis.timestamp
         initial_round = self.bc.current_round
-        period = 0
+        period = self.bc.current_period
         self.logger.info(f"initial round {initial_round}")
         while True:
             if self.config.total_rounds is not None and self.bc.current_round >= initial_round + self.config.total_rounds:
@@ -269,11 +269,7 @@ class Node:
 
             self.bc.update_round()
             # on round change:
-            if round != self.bc.current_round:
-
-                if (round % self.bc.parameters.period_size) == 0:
-                    self.logger.info(f"TODO: get new stake value")
-
+            if round != self.bc.current_round and self.bc.current_stake > 0:
                 self.logger.debug(f"state: {self.state}")
                 self.network.notify_beacon() #  Notifies beacon this node is still alive and connected to the network
                 # TODO: make the log_dir configurable (and maybe
@@ -290,7 +286,7 @@ class Node:
 
             # the 200ms timeout prevents us from busy-waiting
             raw = self.network.read(timeout=200)
-            if raw is None:
+            if raw is None or self.bc.current_stake <= 0:
                 continue
 
             self.message_count += 1
