@@ -1,5 +1,5 @@
 from __future__ import annotations
-import base64
+from hashlib import sha256
 import mysql.connector
 import pickle
 import sys
@@ -8,6 +8,7 @@ class TransactionList:
     def __init__(self):
         self.data = b""
         self.transactions = str([])
+        self.transactions_hash = b""
         pass
     def serialize(self) -> bytes:
         pass
@@ -65,6 +66,7 @@ class MockTransactionList(TransactionList):
             cursor.close()
 
             self.transactions = str(self.transactions_list)
+            self.transactions_hash = self.get_hash()
 
         except mysql.connector.Error as err:
             print(f"Error: {err}")
@@ -72,7 +74,6 @@ class MockTransactionList(TransactionList):
         finally:
             if 'connection' in locals():
                 connection.close()
-                print("Connection closed!")
 
     def serialize(self) -> bytes:
         tx_raw = pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
@@ -87,11 +88,11 @@ class MockTransactionList(TransactionList):
 
     #TODO: get hash of all transactions (probably using Merkle tree)
     def get_hash(self) -> bytes:
-        return b"\x00" # TODO Provisory, code below does not work
         if self.transactions:
-            hash_bytes = bytes.fromhex(self.transactions[0]["transaction_hash"])
-            return base64.b64encode(hash_bytes)
+            return sha256(self.transactions.encode()).digest()
         else:
             return b"\x00"
-    
-    
+
+    def __str__(self):
+        return f"Transaction(transactions={self.transactions}, hash={self.hash.hex()})"
+

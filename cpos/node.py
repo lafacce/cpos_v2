@@ -204,7 +204,7 @@ class Node:
         if block.owner_pubkey == self.pubkey.public_bytes_raw():
             self.logger.info(f"discarding block {block.hash.hex()[0:8]} (produced by itself)")
             return False
-        self.logger.info(f"trying to insert {block}")
+        self.logger.debug(f"trying to insert {block}")
         self.received_blocks += 1
         block_in_blockchain = self.bc.block_in_blockchain(block)
         block_in_missed_blocks = any(tup[0].hash.hex() == block.hash.hex() for tup in self.missed_blocks)

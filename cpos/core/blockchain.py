@@ -31,9 +31,6 @@ try:
         database=DATABASE
     )
 
-    if connection.is_connected():
-        print("Connected to the MariaDB database!")
-
 except mysql.connector.Error as err:
     print(f"Error: {err}")
 
@@ -112,17 +109,17 @@ class BlockChain:
 
             if delta_r > 0 and oldest_index > 0:
                 successful_avg = oldest_numSuc / delta_r
-                self.logger.info(f"oldest unconfirmed block: {oldest_id}, delta_r: {delta_r}, s: {successful_avg}")
+                self.logger.debug(f"oldest unconfirmed block: {oldest_id}, delta_r: {delta_r}, s: {successful_avg}")
 
                 # TODO: make the epsilon threshold variable
                 conf_thresh = confirmation_threshold(total_stake=self.parameters.total_stake,
                                     tau=self.parameters.tau,
                                     delta_r=delta_r,
                                     threshold=1e-6)
-                self.logger.info(f"s_min: {conf_thresh}")
+                self.logger.debug(f"s_min: {conf_thresh}")
 
                 if successful_avg > conf_thresh:
-                    self.logger.info(f"confirmed block {oldest_id}")
+                    self.logger.debug(f"confirmed block {oldest_id}")
                     self.confirm_block(oldest_id)
                     self.confirmation_delays.append([oldest_id, oldest_index, self.current_round - oldest_round]) # measured in rounds
                     self.last_confirmation_delay = self.current_round - last_confirmed_block_round

@@ -18,7 +18,7 @@ class Block:
         self.round = round
         self.index = index
         self.transactions = transactionlist.transactions # Only string with transations
-        self.transaction_hash = transactionlist.get_hash()
+        self.transaction_hash = transactionlist.transactions_hash
         self.ticket_number = ticket_number
 
         self.update()

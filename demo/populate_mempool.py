@@ -83,9 +83,6 @@ def populate_mempool() -> None:
             database=DATABASE
         )
 
-        if connection.is_connected():
-            print("Connected to the MariaDB database!")
-
         generator = RandomTransactionGenerator()
 
         while not PROGRAM_INTERRUPTED:
@@ -101,7 +98,6 @@ def populate_mempool() -> None:
     finally:
         if 'connection' in locals():
             connection.close()
-            print("Connection closed!")
 
 
 
