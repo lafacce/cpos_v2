@@ -39,7 +39,7 @@ def sighandler(*args):
     PROGRAM_INTERRUPTED = True
 
 class BlockChainParameters:
-    def __init__(self, round_time: float, tolerance: int, tau: int, total_stake=10):
+    def __init__(self, round_time: float, tolerance: int, tau: float, total_stake=10):
         self.round_time = round_time
         self.tolerance = tolerance
         self.tau = tau
@@ -130,16 +130,16 @@ class BlockChain:
             else:
                 block_confirmed = False
 
-        if delta_r > 0 and oldest_index > 0:
-            fork_thresh = fork_threshold(total_stake=self.parameters.total_stake,
-                                    tau=self.parameters.tau,
-                                    delta_r=delta_r,
-                                    threshold=0.95)
+        #if delta_r > 0 and oldest_index > 0:
+        #    fork_thresh = fork_threshold(total_stake=self.parameters.total_stake,
+        #                            tau=self.parameters.tau,
+        #                            delta_r=delta_r,
+        #                            threshold=0.95)
 
-            if successful_avg < fork_thresh:
-                self.fork_detected = True
-                self.forks_detected += 1
-                self.logger.info(f"fork detected!")
+        #    if successful_avg < fork_thresh:
+        #        self.fork_detected = True
+        #        self.forks_detected += 1
+        #        self.logger.info(f"fork detected!")
 
     def _log_failed_verification(self, block: Block, reason: str):
         self.logger.debug(f"failed to verify block {block.hash.hex()} ({reason})")

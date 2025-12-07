@@ -51,7 +51,7 @@ def run_sortition(signed_node_hash: bytes, stake: int,
     # print(f"result: {i}")
     return i
 
-def confirmation_threshold(total_stake: int, tau: int, delta_r: int, threshold: float):
+def confirmation_threshold(total_stake: int, tau: float, delta_r: int, threshold: float):
     # TODO: When the stake is high (1e4 or 1e5 for example), cumulative_binom_dist() can break, because in the funciton binomial() the numbers get too big. Deal with that somehow. 
     # This doesnt seem to be an edge case. With a big network we might have to deal with stakes in the thousands
     s = 1
@@ -67,7 +67,7 @@ def confirmation_threshold(total_stake: int, tau: int, delta_r: int, threshold: 
             s += 1
     return s
 
-def fork_threshold(total_stake: int, tau: int, delta_r: int, threshold: float = 0.95):
+def fork_threshold(total_stake: int, tau: float, delta_r: int, threshold: float = 0.95):
     a = tau
     p = tau / total_stake
     while True:

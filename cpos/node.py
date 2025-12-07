@@ -86,7 +86,7 @@ class Node:
         # params = BlockChainParameters(round_time=5, tolerance=2, tau=10, total_stake=25)
         round_time = float(os.getenv("ROUND_TIME", 5))
         tolerance = int(os.getenv("TOLERANCE", 2))
-        tau = int(os.getenv("TAU", 10))
+        tau = float(os.getenv("TAU", 10))
         total_stake = int(os.getenv("TOTAL_STAKE", 25))
 
         self.logger.info("PARAMETERS:    " + f" STAKE: {total_stake}      TAU: {tau}     RT:{round_time}     MIN_PEER: {self.minimum_num_peers}     MAX_PEER:{self.maximum_num_peers}    CREATED: {self.broadcast_created_block}     RECEIVED: {self.broadcast_received_block}")
@@ -101,6 +101,8 @@ class Node:
 
         self.produced_blocks = 0 
         self.received_blocks = 0
+        self.discarded_blocks = 0
+        self.inserted_blocks = 0
         self.resyncs = 0
         self.successfull_resyncs = 0
         
@@ -110,11 +112,11 @@ class Node:
     def dump_data(self, log_dir: str):
         cwd = os.getcwd()
         filepath = os.path.join(cwd, log_dir, f"node_{self.id.hex()[0:8]}.data")
-        self.logger.warning(f"Dumping data to {filepath}...")
+        #self.logger.warning(f"Dumping data to {filepath}...")
         try:
             with open(filepath, "wb") as file:
                 blockchain_info = [self.bc.parameters.round_time, self.bc.last_confirmation_delay, self.bc.current_round]
-                debug_info = [self.produced_blocks, self.received_blocks, self.bc.forks_detected ,self.resyncs, self.successfull_resyncs, sorted([i.hex()[0:8] for i in self.network.known_peers])]
+                debug_info = [self.produced_blocks, self.received_blocks, self.discarded_blocks, self.inserted_blocks, self.bc.forks_detected ,self.resyncs, self.successfull_resyncs, sorted([i.hex()[0:8] for i in self.network.known_peers])]
                 data = pickle.dumps((self.bc.last_n_blocks(self.bc.number_of_blocks()), self.bc.last_confirmed_block_info(), self.bc.confirmation_delays, self.message_count, self.total_message_bytes, blockchain_info, debug_info))
                 file.write(data)
                 file.flush()
@@ -198,26 +200,47 @@ class Node:
     def handle_new_block(self, block: Block, peer_id: bytes):
         round = self.bc.current_round
         tolerance = self.bc.parameters.tolerance
+        self.received_blocks += 1
+
         if block.round not in range(round, round + tolerance + 1):
             self.logger.info(f"discarding block {block.hash.hex()[0:8]} (outside of tolerance range)")
+            self.discarded_blocks += 1
             return False
+
         if block.owner_pubkey == self.pubkey.public_bytes_raw():
             self.logger.info(f"discarding block {block.hash.hex()[0:8]} (produced by itself)")
+            self.discarded_blocks += 1
             return False
-        self.logger.debug(f"trying to insert {block}")
-        self.received_blocks += 1
+
         block_in_blockchain = self.bc.block_in_blockchain(block)
+        if block_in_blockchain:
+            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (already in blockchain)")
+            self.discarded_blocks += 1
+            return False
+
         block_in_missed_blocks = any(tup[0].hash.hex() == block.hash.hex() for tup in self.missed_blocks)
-        if not (block_in_blockchain or block_in_missed_blocks):
-            own_id = self.id if not None else self.config.id
-            if self.broadcast_received_block:
-                self.broadcast_message(BlockBroadcast(block, own_id), [peer_id, block.owner_pubkey])
-                # TODO: Blocks are retransmitted and stored without even checking if they are valid. This is ok in a simulation, but unsafe for real use.
-            if not self.bc.insert(block):
-                if not block_in_blockchain:
-                    # TODO: missed_blocks grows infinetly for every block received from a peer. After a suficient number of rounds, it will grow too big.
-                    # It would be reosonable to have a limit to its size and start deleting old blocks, and maybe store peer_id and block seperatelly and without repetition
-                    self.missed_blocks.append((block, peer_id))
+        if block_in_missed_blocks:
+            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (already discarded)")
+            self.discarded_blocks += 1
+            return False
+
+        own_id = self.id if not None else self.config.id
+        #to malicious node do not reply blocks
+        if self.broadcast_received_block:
+            self.broadcast_message(BlockBroadcast(block, own_id), [peer_id, block.owner_pubkey])
+            # TODO: Blocks are retransmitted and stored without even checking if they are valid. This is ok in a simulation, but unsafe for real use.
+
+        if not self.bc.insert(block):
+            # TODO: missed_blocks grows infinetly for every block received from a peer. After a suficient number of rounds, it will grow too big.
+            # It would be reosonable to have a limit to its size and start deleting old blocks, and maybe store peer_id and block seperatelly and without repetition
+            self.missed_blocks.append((block, peer_id))
+            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (missed block)")
+            self.discarded_blocks += 1
+            return False
+
+        self.logger.debug(f"Block inserted {block}")
+        self.inserted_blocks += 1
+        return True
 
     def control_number_of_peers(self):
         if len(self.network.known_peers) < self.minimum_num_peers: 
