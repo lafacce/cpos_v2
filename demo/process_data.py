@@ -20,9 +20,14 @@ def main():
     total_message_bytes = 0
     total_blocks = 0
     total_confirmed_blocks = 0
+    total_received_blocks = 0
+    total_received_block_data = 0
+    total_sent_blocks = 0
+    total_sent_block_data = 0
     total = 0
     smallest_confirmation_delays = {}
     successfull_nodes = 0
+    total_blocks_onChain = 0
     
     for filename in os.listdir(log_dir):
         if not filename.endswith(".data"):
@@ -33,7 +38,7 @@ def main():
         # plot local blockchain views and update statistics
         #print(f"processing {filename}")
         with open(join(log_dir, filename), "rb") as file:
-            bc, last_confirmed_block_info, ini_confirmation_delays, message_count, message_bytes, blockchain_info, debug_info = pickle.load(file)
+            bc, last_confirmed_block_info, ini_confirmation_delays, message_count, message_bytes, blockchain_info, debug_info, network_info = pickle.load(file)
             confirmation_delays = select_valid_confirmation_delays(bc, ini_confirmation_delays)
             throughput, block_count, confirmed_blocks = plot_bc(bc, last_confirmed_block_info, filename, blockchain_info, confirmation_delays)
             avg_throughput += throughput
@@ -41,17 +46,55 @@ def main():
             total_message_bytes += message_bytes
             total_blocks += block_count
             total_confirmed_blocks += confirmed_blocks
+            received_blocks      = network_info[0]
+            received_block_data  = network_info[1]
+            sent_blocks          = network_info[2]
+            sent_block_data      = network_info[3]
+            blocks_onChain       = blockchain_info[3]
+            total_blocks_onChain      += blockchain_info[3]
+            total_received_blocks     += network_info[0]
+            total_received_block_data += network_info[1] / 1024
+            total_sent_blocks         += network_info[2] 
+            total_sent_block_data     += network_info[3] / 1024
+            total_blocks_onChain      += blockchain_info[3]
             total += 1
             # block_delay has a format: [block_id, block_index, confirmation_delay (in rounds)]
             for block_delay in confirmation_delays:
                 if not block_delay[1] in smallest_confirmation_delays or smallest_confirmation_delays[block_delay[1]] > block_delay[2]:
                     smallest_confirmation_delays[block_delay[1]] = block_delay[2]
+        print(f"************** RAW DATA *******************************")
+        print(f"received_blocks       = {received_blocks}")
+        print(f"received_block_data   = {received_block_data}")
+        print(f"sent_blocks           = {sent_blocks}")
+        print(f"sent_block_data       = {sent_block_data}")
+        print(f"blocks_onChain        = {blocks_onChain}")
+        print(f"*******************************************************")
+        
         print(f"Produced blocks: {debug_info[0]},   Received Blocks: {debug_info[1]},   Discarded Blocks: {debug_info[2]}, Inserted Blocks: {debug_info[3]},  Forks Detected: {debug_info[4]},    Resyncs: {debug_info[5]},    Successfull Resyncs: {debug_info[6]}, Known Peers: {len(debug_info[7])}")
         print(f"Overturns: {len(ini_confirmation_delays) - len(confirmation_delays)}")
         print(f"-------------------------------------\n")
 
-
-
+    print(f"************** SUMMARY DATA *******************************")
+    print(f"total_received_blocks       = {total_received_blocks}")
+    print(f"total_received_block_data   = {total_received_block_data:.2f} KBytes")
+    print(f"total_sent_blocks           = {total_sent_blocks}")
+    print(f"total_sent_block_data       = {total_sent_block_data:.2f} KBytes")
+    
+    avg_received_blocks       = total_received_blocks / total
+    avg_received_block_data   = total_received_block_data / total
+    avg_sent_blocks           = total_sent_blocks / total
+    avg_sent_block_data       = total_sent_block_data / total
+    avg_blocks_onChain        = total_blocks_onChain / total
+    
+    print(f"avg_received_blocks       = {avg_received_blocks:.2f}")
+    print(f"avg_received_block_data   = {avg_received_block_data:.2f} KBytes")
+    print(f"avg_sent_blocks           = {avg_sent_blocks:.2f}")
+    print(f"avg_sent_block_data       = {avg_sent_block_data:.2f} KBytes")
+    
+    print(f"avg_blocks_onChain       = {avg_blocks_onChain:.2f} ")
+    
+    print(f"***********************************************************")
+        
     avg_throughput /= total
     try:
         average_confirmation_delay = round(sum(smallest_confirmation_delays) / len(smallest_confirmation_delays), 3)
@@ -69,7 +112,7 @@ def main():
 def plot_bc(bc, last_confirmed_block_info, filename: str, blockchain_info: list, confirmation_delays):
     block_count = 0
     last_confirmed_block_index, last_confirmed_block_id, last_confirmed_block_round = last_confirmed_block_info
-    round_time, last_confirmation_delay, current_round = blockchain_info
+    round_time, last_confirmation_delay, current_round, chain_size = blockchain_info
     confirmed_blocks = 0
     i = -1
     for block in bc:

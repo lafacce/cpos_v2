@@ -27,6 +27,7 @@ class NodeConfig:
         self.beacon_port: Optional[int] = kwargs.get("beacon_port", None)
         self.genesis_timestamp: Optional[int] = kwargs.get("genesis_timestamp", None)
         self.total_rounds: Optional[int] = kwargs.get("total_rounds", None)
+        self.period: Optional[int] = kwargs.get("period", None)
 
     def __str__(self):
         return str(self.__dict__)
@@ -52,6 +53,9 @@ class Node:
         self.maximum_num_peers = int(os.environ.get("MAXIMUM_NUM_PEERS", "8"))
         self.minimum_num_peers = int(os.environ.get("MINIMUM_NUM_PEERS", "4"))
 
+        self.period = self.config.period 
+        self.node_on_consensus = False
+        
         if self.config.privkey is not None:
             self.privkey = Ed25519PrivateKey.from_private_bytes(self.config.privkey)
         else:
@@ -89,7 +93,7 @@ class Node:
         tau = float(os.getenv("TAU", 10))
         total_stake = int(os.getenv("TOTAL_STAKE", 25))
 
-        self.logger.info("PARAMETERS:    " + f" STAKE: {total_stake}      TAU: {tau}     RT:{round_time}     MIN_PEER: {self.minimum_num_peers}     MAX_PEER:{self.maximum_num_peers}    CREATED: {self.broadcast_created_block}     RECEIVED: {self.broadcast_received_block}")
+        self.logger.info("PARAMETERS:    " + f" STAKE: {total_stake}      TAU: {tau}     RT:{round_time}     MIN_PEER: {self.minimum_num_peers}     MAX_PEER:{self.maximum_num_peers}    CREATED: {self.broadcast_created_block}     RECEIVED: {self.broadcast_received_block}    PERIOD: {self.period}")
         params = BlockChainParameters(round_time=round_time, tolerance=tolerance, tau=tau, total_stake=total_stake)
         self.bc: BlockChain = BlockChain(params, genesis=genesis, node_id=self.id)
         self.state = State.LISTENING
@@ -100,13 +104,20 @@ class Node:
         self.total_message_bytes = 0
 
         self.produced_blocks = 0 
-        self.received_blocks = 0
         self.discarded_blocks = 0
         self.inserted_blocks = 0
         self.resyncs = 0
         self.successfull_resyncs = 0
         
         self.should_halt: bool = False
+
+        self.received_blocks = 0
+        self.received_block_data = 0
+        self.sent_blocks = 0
+        self.sent_block_data = 0
+
+        
+
 
     # TODO: make the log_dir configurable
     def dump_data(self, log_dir: str):
@@ -115,9 +126,10 @@ class Node:
         #self.logger.warning(f"Dumping data to {filepath}...")
         try:
             with open(filepath, "wb") as file:
-                blockchain_info = [self.bc.parameters.round_time, self.bc.last_confirmation_delay, self.bc.current_round]
+                blockchain_info = [self.bc.parameters.round_time, self.bc.last_confirmation_delay, self.bc.current_round, self.bc.number_of_blocks()]
                 debug_info = [self.produced_blocks, self.received_blocks, self.discarded_blocks, self.inserted_blocks, self.bc.forks_detected ,self.resyncs, self.successfull_resyncs, sorted([i.hex()[0:8] for i in self.network.known_peers])]
-                data = pickle.dumps((self.bc.last_n_blocks(self.bc.number_of_blocks()), self.bc.last_confirmed_block_info(), self.bc.confirmation_delays, self.message_count, self.total_message_bytes, blockchain_info, debug_info))
+                network_info = [self.received_blocks, self.received_block_data, self.sent_blocks, self.sent_block_data]
+                data = pickle.dumps((self.bc.last_n_blocks(self.bc.number_of_blocks()), self.bc.last_confirmed_block_info(), self.bc.confirmation_delays, self.message_count, self.total_message_bytes, blockchain_info, debug_info, network_info))
                 file.write(data)
                 file.flush()
                 file.close()
@@ -151,6 +163,8 @@ class Node:
     def broadcast_message(self, msg: Message, invalid_peers: list):
         for peer in self.network.known_peers:
             if not peer in invalid_peers:
+                self.sent_blocks += 1
+                self.sent_block_data += len(msg.serialize())
                 self.send_message(peer, msg)
 
     def greet_peers(self):
@@ -200,7 +214,6 @@ class Node:
     def handle_new_block(self, block: Block, peer_id: bytes):
         round = self.bc.current_round
         tolerance = self.bc.parameters.tolerance
-        self.received_blocks += 1
 
         if block.round not in range(round, round + tolerance + 1):
             self.logger.info(f"discarding block {block.hash.hex()[0:8]} (outside of tolerance range)")
@@ -291,12 +304,21 @@ class Node:
             self.bc.update_round()
             # on round change:
             if round != self.bc.current_round:
+
+                round = self.bc.current_round
                 self.logger.debug(f"state: {self.state}")
                 self.network.notify_beacon() #  Notifies beacon this node is still alive and connected to the network
                 # TODO: make the log_dir configurable (and maybe
                 # don't log every single round...)
+
+                if self.node_on_consensus == False:
+                    if self.period is not None and self.bc.current_round % self.period == 0:
+                        self.node_on_consensus = True
+                        self.logger.info(f"Node is on consensus round {self.bc.current_round}!")
+                    else:
+                        continue
+                        
                 self.dump_data("demo/logs")
-                round = self.bc.current_round
                 new_block = self.generate_block()
                 if new_block is not None and self.broadcast_created_block: # if dishonest node isnt going to broadcast block, it is also not going to insert in local blockchain
                     self.produced_blocks += 1
@@ -319,6 +341,8 @@ class Node:
             if self.state == State.LISTENING:
                 if isinstance(msg, BlockBroadcast):
                     self.handle_new_block(msg.block, msg.peer_id)    
+                    self.received_blocks += 1
+                    self.received_block_data += len(raw)
                 if isinstance(msg, ResyncRequest):
                     peer_id = msg.peer_id
                     # make sure we only send stuff after the genesis block
