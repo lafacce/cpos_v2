@@ -2,7 +2,13 @@ import os
 from os.path import join
 import pickle
 
-import os
+import os, sys
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+# rest of imports
+import cpos
 
 
 def main():
@@ -40,9 +46,11 @@ def main():
             for block_delay in confirmation_delays:
                 if not block_delay[1] in smallest_confirmation_delays or smallest_confirmation_delays[block_delay[1]] > block_delay[2]:
                     smallest_confirmation_delays[block_delay[1]] = block_delay[2]
-        print(f"Produced blocks: {debug_info[0]},   Received Blocks: {debug_info[1]},   Forks Detected: {debug_info[2]},    Resyncs: {debug_info[3]},    Successfull Resyncs: {debug_info[4]}, Known Peers: {len(debug_info[5])}")
+        print(f"Produced blocks: {debug_info[0]},   Received Blocks: {debug_info[1]},   Discarded Blocks: {debug_info[2]}, Inserted Blocks: {debug_info[3]},  Forks Detected: {debug_info[4]},    Resyncs: {debug_info[5]},    Successfull Resyncs: {debug_info[6]}, Known Peers: {len(debug_info[7])}")
         print(f"Overturns: {len(ini_confirmation_delays) - len(confirmation_delays)}")
         print(f"-------------------------------------\n")
+
+
 
     avg_throughput /= total
     try:
