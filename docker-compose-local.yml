@@ -10,7 +10,6 @@ services:
       - PORT=9000
       - NUM_PEERS_SEND=5           # number of peers sent by beacon to nodes who just entered or need more
       - ROUND_TIME=10
-      - PERIOD=32
     command: /bin/bash demo/run_beacon.sh
 
   node:
@@ -28,9 +27,9 @@ services:
       - BEACON_IP=beacon
       - BEACON_PORT=9000
       - PORT=8888
-      - NUMBER_OF_ROUNDS=20
+      - NUMBER_OF_ROUNDS=204
       - ROUND_TIME=10
-      - PERIOD=32
+      - PERIOD=4
       - TOLERANCE=2
       - TAU=2
       - TOTAL_STAKE=10

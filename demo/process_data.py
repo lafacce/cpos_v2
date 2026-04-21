@@ -51,7 +51,6 @@ def main():
             sent_blocks          = network_info[2]
             sent_block_data      = network_info[3]
             blocks_onChain       = blockchain_info[3]
-            total_blocks_onChain      += blockchain_info[3]
             total_received_blocks     += network_info[0]
             total_received_block_data += network_info[1] / 1024
             total_sent_blocks         += network_info[2] 
@@ -81,7 +80,7 @@ def main():
     print(f"total_sent_block_data       = {total_sent_block_data:.2f} KBytes")
     
     avg_received_blocks       = total_received_blocks / total
-    avg_received_block_data   = total_received_block_data / total
+    avg_received_block_data   = total_received_block_data /total
     avg_sent_blocks           = total_sent_blocks / total
     avg_sent_block_data       = total_sent_block_data / total
     avg_blocks_onChain        = total_blocks_onChain / total
@@ -116,10 +115,10 @@ def plot_bc(bc, last_confirmed_block_info, filename: str, blockchain_info: list,
     confirmed_blocks = 0
     i = -1
     for block in bc:
-        if i < len(confirmation_delays) and i != -1:
-            print(block, confirmation_delays[i][0].hex()[0:8], confirmation_delays[i][1], confirmation_delays[i][2])
-        else:
-            print(block)
+        #if i < len(confirmation_delays) and i != -1:
+        #    print(block, confirmation_delays[i][0].hex()[0:8], confirmation_delays[i][1], confirmation_delays[i][2])
+        #else:
+        #    print(block)
         i += 1
         block_count += 1
         if block.hash == last_confirmed_block_id:
