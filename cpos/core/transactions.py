@@ -30,7 +30,7 @@ PASSWORD = "CPoSPW"
 DATABASE = "mempool"
 # This retrieve query has a limit of 200 for memory safety purposes. You can change if you want.
 # This number was chosen considering we had at most 110 transactions during our tests for theses parameters.
-RETRIEVE_QUERY = "SELECT * FROM transactions WHERE committed = 0 and chosen = 0 ORDER BY value DESC LIMIT 200"
+RETRIEVE_QUERY = "SELECT * FROM transactions WHERE committed = 0 and chosen = 0 ORDER BY value DESC LIMIT 144"
 BLOCK_SIZE = 199000     # 200kb - ~1kB of header
 
 class MockTransactionList(TransactionList):

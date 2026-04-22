@@ -90,7 +90,7 @@ class Node:
         # params = BlockChainParameters(round_time=5, tolerance=2, tau=10, total_stake=25)
         round_time = float(os.getenv("ROUND_TIME", 5))
         tolerance = int(os.getenv("TOLERANCE", 2))
-        tau = float(os.getenv("TAU", 10))
+        tau = int(os.getenv("TAU", 10))
         total_stake = int(os.getenv("TOTAL_STAKE", 25))
 
         self.logger.info("PARAMETERS:    " + f" STAKE: {total_stake}      TAU: {tau}     RT:{round_time}     MIN_PEER: {self.minimum_num_peers}     MAX_PEER:{self.maximum_num_peers}    CREATED: {self.broadcast_created_block}     RECEIVED: {self.broadcast_received_block}    PERIOD: {self.period}")

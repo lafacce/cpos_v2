@@ -28,7 +28,7 @@ def main():
     config = NodeConfig(**vars(args))
     print(config)
     node = Node(config)
-    sleep(5)
+    #    sleep(2)
 
     def sighandler(*args):
         node.logger.error(f"Received SIGTERM! Exiting...")
