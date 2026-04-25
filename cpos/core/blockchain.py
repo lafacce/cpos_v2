@@ -192,7 +192,7 @@ class BlockChainDatabase:
         block_list = []
         self.cursor.execute(f"SELECT * FROM localChains ORDER BY block_index ASC LIMIT {n}")
         for block_info in self.cursor:
-            block_list.append(self.compose_block(block_info))
+            block_list.append(block_info)
         return block_list
 
     def block_by_index(self, block_index):
@@ -218,6 +218,13 @@ class BlockChainDatabase:
         TRUNCATE_QUERY = "TRUNCATE TABLE tempMiniBlocks"
         self.cursor.execute(TRUNCATE_QUERY)
         connection.commit()
+
+    def miniBlock_in_blockchain(self, miniBlock: MiniBlock):
+        FIND_MINIBLOCK_QUERY = "SELECT * FROM localMiniBlocks WHERE id = %s LIMIT 1"
+        self.cursor.execute(FIND_MINIBLOCK_QUERY, [miniBlock.hash.hex()])
+        element = self.cursor.fetchone()
+        miniBlock_in_blockchain = (element != None)
+        return miniBlock_in_blockchain
 
 class BlockChain:
 
@@ -513,7 +520,7 @@ class BlockChain:
     # try to insert a block at the end of the chain
     def insert_miniBlock(self, miniBlock: MiniBlock) -> bool:
         self.blockChainDatabase.get_cursor()
-        if self.blockChainDatabase.block_in_blockchain(miniBlock):
+        if self.blockChainDatabase.miniBlock_in_blockchain(miniBlock):
             self._log_failed_insertion(miniBlock, "already in local chain")
             self.blockChainDatabase.close_cursor()
             return False
@@ -559,3 +566,23 @@ class BlockChain:
         self.blockChainDatabase.close_cursor()
         return True
 
+    def handle_new_miniBlock(self, miniBlock: MiniBlock, public_key: bytes):
+        tolerance = self.parameters.tolerance
+        if miniBlock.round != self.current_round:
+            self.logger.info(f"discarding miniBlock {miniBlock.hash.hex()[0:8]} (miniBlock is not from current round)")
+            return False
+
+        if miniBlock.owner_pubkey == public_key:
+            self.logger.info(f"discarding miniBlock {miniBlock.hash.hex()[0:8]} (produced by itself)")
+            return False
+
+        self.blockChainDatabase.get_cursor()
+        miniBlock_in_blockchain = self.blockChainDatabase.miniBlock_in_blockchain(miniBlock)
+        if miniBlock_in_blockchain:
+            self.logger.info(f"discarding miniBlock {miniBlock.hash.hex()[0:8]} (already in blockchain)")
+            self.blockChainDatabase.close_cursor()
+            return False
+
+        self.logger.debug(f"miniBlock received and inserted {miniBlock}")   
+        self.blockChainDatabase.close_cursor()    
+        return True

@@ -7,12 +7,11 @@ import pickle
 import random 
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cpos.core.block import Block, GenesisBlock
+from cpos.core.block import Block, MiniBlock, GenesisBlock
 from cpos.core.blockchain import BlockChain, BlockChainParameters
-from cpos.core.transactions import TransactionList, MockTransactionList
 from cpos.p2p.network import Network
 
-from cpos.protocol.messages import BlockBroadcast, Hello, Message, ResyncRequest, ResyncResponse, PeerForgetRequest
+from cpos.protocol.messages import BlockBroadcast, MiniBlockBroadcast, Hello, Message, ResyncRequest, ResyncResponse, PeerForgetRequest
 
 from cpos.p2p.peer import Peer
 
@@ -32,8 +31,10 @@ class NodeConfig:
         return str(self.__dict__)
 
 class State:
-    LISTENING = 0x01,
-    RESYNCING = 0x02,
+    WAITING        = 0x01,
+    PROPOSALS      = 0x02,
+    LISTENING      = 0x03,
+    RESYNCING      = 0x04,
 
 class Node:
     def __init__(self, config: NodeConfig):
@@ -96,7 +97,7 @@ class Node:
         self.logger.info("PARAMETERS:    " + f" STAKE: {total_stake}      TAU: {tau}     MINITAU: {miniTau}      RT:{round_time}     MIN_PEER: {self.minimum_num_peers}     MAX_PEER:{self.maximum_num_peers}    CREATED: {self.broadcast_created_block}     RECEIVED: {self.broadcast_received_block}    PERIOD: {period}")
         params = BlockChainParameters(round_time=round_time, tolerance=tolerance, tau=tau, miniTau=miniTau, total_stake=total_stake, period=period)
         self.bc: BlockChain = BlockChain(params, genesis=genesis, node_id=self.id)
-        self.state = State.LISTENING
+        self.state = State.WAITING
         self.missed_blocks: list[tuple[Block, bytes]] = []
         self.received_resync_blocks: list[Block] = []
         
@@ -123,10 +124,10 @@ class Node:
         #self.logger.warning(f"Dumping data to {filepath}...")
         try:
             with open(filepath, "wb") as file:
-                blockchain_info = [self.bc.parameters.round_time, self.bc.last_confirmation_delay, self.bc.current_round, self.bc.number_of_blocks()]
+                blockchain_info = [self.bc.parameters.round_time, self.bc.last_confirmation_delay, self.bc.current_round, self.bc.blockChainDatabase.number_of_blocks()]
                 debug_info = [self.produced_blocks, self.received_blocks, self.discarded_blocks, self.inserted_blocks, self.bc.forks_detected ,self.resyncs, self.successfull_resyncs, sorted([i.hex()[0:8] for i in self.network.known_peers])]
                 network_info = [self.received_blocks, self.received_block_data, self.sent_blocks, self.sent_block_data]
-                data = pickle.dumps((self.bc.last_n_blocks(self.bc.number_of_blocks()), self.bc.last_confirmed_block_info(), self.bc.confirmation_delays, self.message_count, self.total_message_bytes, blockchain_info, debug_info, network_info))
+                data = pickle.dumps((self.bc.blockChainDatabase.last_n_blocks(self.bc.blockChainDatabase.number_of_blocks()), self.bc.blockChainDatabase.last_confirmed_block_info(), self.bc.confirmation_delays, self.message_count, self.total_message_bytes, blockchain_info, debug_info, network_info))
                 file.write(data)
                 file.flush()
                 file.close()
@@ -172,41 +173,6 @@ class Node:
     def sign_block(self, block: Block):
         block.signed_node_hash = self.privkey.sign(block.node_hash)
         block.update()
-
-    # TODO: this should be moved to a BlockChainManager class
-    # TODO: we should have clean interfaces for accessing/iterating
-    #       through the BlockChain elements (__getitem__, etc.) instead
-    #       of indexing manually like we're doing now
-    def generate_block(self) -> Optional[Block]:
-        stake = self.bc.lookup_node_stake(self.id)
-        candidate: Optional[Block] = None
-        for i in range(0, stake):
-            if self.use_mock_transactions:
-                tx = MockTransactionList()
-            else:
-                tx = TransactionList()
-
-            block = Block(parent_hash=self.bc.get_last_block_hash(),
-                          transactionlist=tx,
-                          owner_pubkey=self.pubkey.public_bytes_raw(),
-                          signed_node_hash=b"",
-                          round=self.bc.current_round,
-                          index=self.bc.number_of_blocks(),
-                          ticket_number=i)
-            self.sign_block(block)
-            block.ticket_number = i
-
-            if not self.bc.validate_block(block):
-                continue
-
-            self.logger.debug(f"block candidate: {block}")
-            
-            if candidate is None or block.proof_hash < candidate.proof_hash:
-                candidate = block
-
-        if candidate is not None:
-            self.logger.info(f"successfully generated a block: {candidate}")
-        return candidate
 
     def handle_new_block(self, block: Block, peer_id: bytes):
         round = self.bc.current_round
@@ -279,58 +245,52 @@ class Node:
                 self.logger.error("halted")
                 break
             
-            # if we detect a fork, resync with a node that sent a random missed block
-            if self.state == State.LISTENING and self.bc.fork_detected and self.missed_blocks:
-                stopResyncing = False
-                while True:
-                    if len(self.missed_blocks) == 0:
-                        stopResyncing = True
-                        break
-                    missed: tuple[Block, bytes] = random.choice(self.missed_blocks)
-                    self.missed_blocks.remove(missed)
-                    # Start by asking for its last block
-                    request_index = -1
-                    if self.send_message(missed[1], ResyncRequest(self.id, request_index)):
-                        break
-                if stopResyncing:
-                    continue
-                self.state = State.RESYNCING
-                self.resyncs += 1
-                self.logger.info("started resyncing")
-
             self.bc.update_round()
             # on round change:
             if round != self.bc.current_round:
-
                 round = self.bc.current_round
                 self.logger.debug(f"state: {self.state}")
                 self.network.notify_beacon() #  Notifies beacon this node is still alive and connected to the network
-                # TODO: make the log_dir configurable (and maybe
-                # don't log every single round...)
-
-                if self.node_on_consensus == False:
+             
+                if self.state == State.WAITING:
                     if self.bc.parameters.period is not None and self.bc.current_round % self.bc.parameters.period == 0:
-                        self.node_on_consensus = True
+                        self.state = State.PROPOSALS
                         self.logger.info(f"Node is on consensus for period  {self.bc.parameters.period} - round {self.bc.current_round}!")
                     else:
                         continue
                 
-                #self.dump_data("demo/logs")
-                #new_block = self.generate_block()
-                #if new_block is not None and self.broadcast_created_block: # if dishonest node isnt going to broadcast block, it is also not going to insert in local blockchain
-                #    self.produced_blocks += 1
-                #    self.bc.insert(new_block)
-                #    own_id = self.id if not None else self.config.id
-                #    if self.broadcast_created_block:
-                #        self.broadcast_message(BlockBroadcast(new_block, own_id), [])
-                
+                # TODO: make the log_dir configurable (and maybe
+                # don't log every single round...
+                # TODO: adjust dump
+                # self.dump_data("demo/logs")
                 new_miniblock = self.bc.generate_miniBlock(self.id, self.privkey, self.pubkey.public_bytes_raw(), self.use_mock_transactions)
                 if new_miniblock is not None and self.broadcast_created_block: # if dishonest node isnt going to broadcast block, it is also not going to insert in local blockchain
-                    self.produced_blocks += 1
-                    self.bc.insert_miniBlock(new_miniblock)
-                    own_id = self.id if not None else self.config.id
-                    #if self.broadcast_created_block:
-                    #    self.broadcast_message(BlockBroadcast(new_miniblock, own_id), [])
+                    if self.bc.insert_miniBlock(new_miniblock):
+                        own_id = self.id if not None else self.config.id
+                        if self.broadcast_created_block:
+                            self.broadcast_message(MiniBlockBroadcast(new_miniblock, own_id), [])
+                        
+
+            # if we detect a fork, resync with a node that sent a random missed block
+            #if self.state == State.LISTENING and self.bc.fork_detected and self.missed_blocks:
+            #    stopResyncing = False
+            #    while True:
+            #        if len(self.missed_blocks) == 0:
+            #            stopResyncing = True
+            #            break
+            #        missed: tuple[Block, bytes] = random.choice(self.missed_blocks)
+            #        self.missed_blocks.remove(missed)
+            #        # Start by asking for its last block
+            #        request_index = -1
+            #        if self.send_message(missed[1], ResyncRequest(self.id, request_index)):
+            #            break
+            #    if stopResyncing:
+            #        continue
+            #    self.state = State.RESYNCING
+            #    self.resyncs += 1
+            #    self.logger.info("started resyncing")
+
+            
 
             # the 200ms timeout prevents us from busy-waiting
             raw = self.network.read(timeout=200)
@@ -342,6 +302,26 @@ class Node:
 
             msg = Message.deserialize(raw)
             self.logger.debug(f"new message: {msg}")
+
+            if self.state == State.PROPOSALS:
+                if isinstance(msg, MiniBlockBroadcast):
+                    self.logger.debug(f"Received mini-block from: {msg.peer_id.hex()[0:8]}")
+                    if self.bc.handle_new_miniBlock(msg.miniBlock, self.pubkey.public_bytes_raw()):
+                        self.logger.info(f"MiniBlock received {msg.miniBlock}")
+                        if self.bc.insert_miniBlock(msg.miniBlock):
+                            own_id = self.id if not None else self.config.id
+                            #to malicious node do not reply blocks
+                            if self.broadcast_received_block:
+                                self.broadcast_message(MiniBlockBroadcast(msg.miniBlock, own_id), [msg.peer_id, msg.miniBlock.owner_pubkey])
+                        
+                        # Provavelmente nao vamos usar isso. Talvez no resync
+                        #if not self.bc.insert_block(block):
+                        #    # TODO: missed_blocks grows infinetly for every block received from a peer. After a suficient number of rounds, it will grow too big.
+                        #    # It would be reosonable to have a limit to its size and start deleting old blocks, and maybe store peer_id and block seperatelly and without repetition
+                        #    self.missed_blocks.append((block, peer_id))
+                        #    self.logger.info(f"discarding block {block.hash.hex()[0:8]} (missed block)")
+                        #    self.discarded_blocks += 1
+
 
             if self.state == State.LISTENING:
                 if isinstance(msg, BlockBroadcast):
@@ -362,51 +342,51 @@ class Node:
                     self.logger.info(f"Received forget request from: {msg.peer_id.hex()[0:8]}")
                     self.network.forget_peer(msg.peer_id)
 
-            if self.state == State.RESYNCING:
-                if isinstance(msg, ResyncResponse):
-                    # Store the received blocks
-                    self.received_resync_blocks.insert(0, msg.block_received)
-
-                    # If the peer doesn't have useful blocks, ask to another random peer
-                    if not msg.block_received:
-                        self.received_resync_blocks = []
-                        if self.missed_blocks:
-                            missed: tuple[Block, bytes] = random.choice(self.missed_blocks)
-                            self.missed_blocks.remove(missed)
-                            request_index = -1
-                            self.send_message(missed[1], ResyncRequest(self.id, request_index))
-                        else:
-                            self.state = State.LISTENING
-                            self.received_resync_blocks = []
-                            self.bc.fork_detected = False
-                            self.logger.info("resync finished unsuccessfully!")
-
-                    # If the resync is successful, finish the resync
-                    elif self.bc.merge(self.received_resync_blocks):
-                        self.state = State.LISTENING
-                        self.received_resync_blocks = []
-                        self.bc.fork_detected = False
-                        self.missed_blocks = []
-                        self.successfull_resyncs += 1
-                        self.logger.info("resync completed!")
-
-                    # If it is needed to request for more blocks
-                    else:
-                        request_index -= 1
-                        self.send_message(missed[1], ResyncRequest(self.id, request_index))
+            #if self.state == State.RESYNCING:
+            #    if isinstance(msg, ResyncResponse):
+            #        # Store the received blocks
+            #        self.received_resync_blocks.insert(0, msg.block_received)
+            #
+            #        # If the peer doesn't have useful blocks, ask to another random peer
+            #        if not msg.block_received:
+            #            self.received_resync_blocks = []
+            #            if self.missed_blocks:
+            #                missed: tuple[Block, bytes] = random.choice(self.missed_blocks)
+            #                self.missed_blocks.remove(missed)
+            #                request_index = -1
+            #                self.send_message(missed[1], ResyncRequest(self.id, request_index))
+            #            else:
+            #                self.state = State.LISTENING
+            #                self.received_resync_blocks = []
+            #                self.bc.fork_detected = False
+            #                self.logger.info("resync finished unsuccessfully!")
+            #
+            #        # If the resync is successful, finish the resync
+            #        elif self.bc.merge(self.received_resync_blocks):
+            #            self.state = State.LISTENING
+            #            self.received_resync_blocks = []
+            #            self.bc.fork_detected = False
+            #            self.missed_blocks = []
+            #            self.successfull_resyncs += 1
+            #            self.logger.info("resync completed!")
+            #
+            #        # If it is needed to request for more blocks
+            #        else:
+            #            request_index -= 1
+            #            self.send_message(missed[1], ResyncRequest(self.id, request_index))
                           
-                # we need to reply to ResyncRequest in order to avoid a
-                # distributed deadlock
-                if isinstance(msg, ResyncRequest):
-                    peer_id = msg.peer_id
-                    # make sure we only send stuff after the genesis block
-                    # If there are blocks available at this index, send it
-                    if self.bc.number_of_blocks() > abs(msg.block_index):
-                        block_to_send = self.bc.block_by_index(msg.block_index)
-                        self.send_message(peer_id, ResyncResponse(block_to_send))
-                    # Else, send None to signal there are no blocks that match the request
-                    else:
-                        self.send_message(peer_id, ResyncResponse(None))
+            #    # we need to reply to ResyncRequest in order to avoid a
+            #    # distributed deadlock
+            #    if isinstance(msg, ResyncRequest):
+            #        peer_id = msg.peer_id
+            #        # make sure we only send stuff after the genesis block
+            #        # If there are blocks available at this index, send it
+            #        if self.bc.number_of_blocks() > abs(msg.block_index):
+            #            block_to_send = self.bc.block_by_index(msg.block_index)
+            #            self.send_message(peer_id, ResyncResponse(block_to_send))
+            #        # Else, send None to signal there are no blocks that match the request
+            #        else:
+            #           self.send_message(peer_id, ResyncResponse(None))
 
             self.control_number_of_peers()
 

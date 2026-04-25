@@ -4,16 +4,17 @@ from base64 import b64encode, b64decode
 import pickle
 from typing import Self
 
-from cpos.core.block import Block
+from cpos.core.block import Block,MiniBlock
 from cpos.core.transactions import TransactionList
 
 class MessageCode:
-    UNDEFINED = 0x0
-    HELLO = 0x1
-    BLOCK_BROADCAST = 0x2
-    PEER_LIST_REQUEST = 0x3
-    PEER_LIST = 0x4
-    PEER_FORGET_REQUEST = 0x5
+    UNDEFINED           = 0x0
+    HELLO               = 0x1
+    MINIBLOCK_BROADCAST = 0x2
+    BLOCK_BROADCAST     = 0x3
+    PEER_LIST_REQUEST   = 0x4
+    PEER_LIST           = 0x5
+    PEER_FORGET_REQUEST = 0x6
 
 class MessageParseError(Exception):
     pass
@@ -41,6 +42,18 @@ class Hello(Message):
 
     def __str__(self):
         return f"Hello(id={self.peer_id.hex()[0:8]}, port={self.peer_port})"
+
+class MiniBlockBroadcast(Message):
+    def __init__(self, miniBlock: MiniBlock, peer_id: bytes):
+        self.code = MessageCode.MINIBLOCK_BROADCAST
+        self.miniBlock = miniBlock
+        self.peer_id = peer_id
+
+    def __str__(self):
+        return self.miniBlock.__str__()
+    
+    def __repr__(self):
+        return self.__str__()
 
 class BlockBroadcast(Message):
     def __init__(self, block: Block, peer_id: bytes):

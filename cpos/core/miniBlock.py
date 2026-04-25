@@ -46,7 +46,19 @@ class MiniBlock:
 
     def sign_miniBlock(self, privkey: Ed25519PrivateKey, miniBlock: MiniBlock):
         self.signed_node_hash = privkey.sign(miniBlock.node_hash)
-
+        
+    def compose_miniBlock(self, miniBlock_info):
+        transaction_list = TransactionList()
+        transaction_list.set_transactions(miniBlock_info[9])
+        b = MiniBlock(parent_hash=bytes.fromhex(miniBlock_info[3]),
+                      owner_pubkey=bytes.fromhex(miniBlock_info[5]),
+                      signed_node_hash=bytes.fromhex(miniBlock_info[6]), 
+                      round=miniBlock_info[2],
+                      index=miniBlock_info[0],
+                      transactionlist=transaction_list, 
+                      ticket_number=miniBlock_info[8])
+        return b
+        
 class MiniBlockList:
     def __init__(self, miniBlockList: List[MiniBlock] = None):
         self.miniBlocks = miniBlockList if miniBlockList is not None else []
@@ -86,3 +98,4 @@ class MiniBlockList:
             return sha256(''.join(self.miniBlocks).encode()).digest()
         else:
             return None
+    
