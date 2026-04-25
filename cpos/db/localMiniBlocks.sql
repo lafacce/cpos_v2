@@ -1,5 +1,5 @@
-CREATE TABLE IF NOT EXISTS localChains (
-        block_index integer(100) NOT NULL,
+CREATE TABLE IF NOT EXISTS localMiniBlocks (
+        miniBlock_index integer(100) NOT NULL,
         id varchar(255) NOT NULL,
         round integer,
         parent_hash varchar(255),
@@ -8,12 +8,10 @@ CREATE TABLE IF NOT EXISTS localChains (
         signed_node_hash varchar(255),
         merkle_root varchar(255),
         ticket_number integer(100),
-        miniBlocks longtext,
+        transactions longtext,
         arrive_time integer,
-        fork integer,
         confirmed integer,
         subuser integer,
-        proof_hash varchar(255),
         numSuc integer,
         round_stable integer default 0,
-        PRIMARY KEY (id,block_index))
+        PRIMARY KEY (id,miniBlock_index))

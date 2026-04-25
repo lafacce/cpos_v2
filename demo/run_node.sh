@@ -10,11 +10,13 @@ mysql mempool < cpos/db/mempool.sql
 echo "initializing local blockchain database"
 mysql -e "CREATE DATABASE localBlockchain;"
 mysql localBlockchain < cpos/db/localBlockchain.sql
+mysql localBlockchain < cpos/db/localMiniBlocks.sql
+mysql localBlockchain < cpos/db/tempMiniBlocks.sql
 
 # CPoS related commands
 export GENESIS_TIMESTAMP=$(date -d '2024-06-01 00:00:00' +%s)
 echo "GENESIS_TIMESTAMP: $GENESIS_TIMESTAMP"
-poetry run python demo/main.py --beacon-ip $BEACON_IP --beacon-port $BEACON_PORT -p $PORT --genesis-timestamp $GENESIS_TIMESTAMP --total-rounds $NUMBER_OF_ROUNDS --period $PERIOD &
+poetry run python demo/main.py --beacon-ip $BEACON_IP --beacon-port $BEACON_PORT -p $PORT --genesis-timestamp $GENESIS_TIMESTAMP --total-rounds $NUMBER_OF_ROUNDS &
 pid=$!
 
 # trap "send_data" INT TERM

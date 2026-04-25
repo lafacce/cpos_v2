@@ -20,19 +20,20 @@ services:
     depends_on:
       - beacon
     deploy:
-      replicas: 10
+      replicas: 6
     volumes:
       - .:/cpos
     environment:
       - BEACON_IP=beacon
       - BEACON_PORT=9000
       - PORT=8888
-      - NUMBER_OF_ROUNDS=116
+      - NUMBER_OF_ROUNDS=20
       - ROUND_TIME=6
-      - PERIOD=16
+      - PERIOD=4
       - TOLERANCE=2
+      - MINITAU=3
       - TAU=2
-      - TOTAL_STAKE=10
+      - TOTAL_STAKE=6
       - MOCK_TRANSACTIONS=true           # set to true to use randomly generated transactions
       - MAXIMUM_NUM_PEERS=4              # maximum number of peers a node can have
       - MINIMUM_NUM_PEERS=3              # minimum number of peers a node can have
@@ -65,7 +66,8 @@ services:
       - ROUND_TIME=10
       - PERIOD=32
       - TOLERANCE=2
-      - TAU=1
+      - MINITAU=5
+      - TAU=2
       - TOTAL_STAKE=10
         MOCK_TRANSACTIONS=true           # set to true to use randomly generated transactions
       - MAXIMUM_NUM_PEERS=4              # maximum number of peers a node can have

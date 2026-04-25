@@ -1,6 +1,6 @@
 from __future__ import annotations
 from hashlib import sha256
-from cpos.core.transactions import TransactionList
+from cpos.core.miniBlock import MiniBlock
 from time import time
 
 class Block:
@@ -9,7 +9,7 @@ class Block:
     # - Use the node's pubkey as its ID
     # - When calculating the node hash, use the hash of the previous block instead
     #   of the epoch head
-    def __init__(self, parent_hash: bytes, transactionlist: TransactionList,
+    def __init__(self, parent_hash: bytes, miniBlockList: MiniBlockList,
                  owner_pubkey: bytes, signed_node_hash: bytes,
                  round: int, index: int, ticket_number: int):
         self.parent_hash = parent_hash
@@ -17,8 +17,7 @@ class Block:
         self.signed_node_hash = signed_node_hash
         self.round = round
         self.index = index
-        self.transactions = transactionlist.transactions # Only string with transations
-        self.transaction_hash = transactionlist.transactions_hash
+        self.miniBlocks = miniBlockList.miniBlocks if miniBlockList is not None else []
         self.ticket_number = ticket_number
 
         self.update()
@@ -59,7 +58,7 @@ class GenesisBlock(Block):
         self.owner_id = b"\x00"
         self.owner_pubkey = b"\x00"
         self.proof_hash = b"\x00"
-        self.transaction_hash = b"\x00"
+        self.miniBlocks = b"\x00"
         self.signed_node_hash = b"\x00"
         self.round = 0
         self.index = 0

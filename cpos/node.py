@@ -27,7 +27,6 @@ class NodeConfig:
         self.beacon_port: Optional[int] = kwargs.get("beacon_port", None)
         self.genesis_timestamp: Optional[int] = kwargs.get("genesis_timestamp", None)
         self.total_rounds: Optional[int] = kwargs.get("total_rounds", None)
-        self.period: Optional[int] = kwargs.get("period", None)
 
     def __str__(self):
         return str(self.__dict__)
@@ -53,7 +52,6 @@ class Node:
         self.maximum_num_peers = int(os.environ.get("MAXIMUM_NUM_PEERS", "8"))
         self.minimum_num_peers = int(os.environ.get("MINIMUM_NUM_PEERS", "4"))
 
-        self.period = self.config.period 
         self.node_on_consensus = False
         
         if self.config.privkey is not None:
@@ -86,15 +84,17 @@ class Node:
             self.logger.info(f"generating genesis block: {genesis}")
 
         # TODO: we need to be able to, at runtinme:
-        # - request the blockchain parameters from other nodes
-        # params = BlockChainParameters(round_time=5, tolerance=2, tau=10, total_stake=25)
+        # - request the blockchain parameters from other nodes or from mempool of parameters
+        # params = BlockChainParameters(round_time=5, tolerance=2, tau=10, miniTau=5, total_stake=25)
+        period = int(os.getenv("PERIOD", 32))
         round_time = float(os.getenv("ROUND_TIME", 5))
         tolerance = int(os.getenv("TOLERANCE", 2))
         tau = int(os.getenv("TAU", 10))
+        miniTau = int(os.getenv("MINI_TAU", 5))
         total_stake = int(os.getenv("TOTAL_STAKE", 25))
 
-        self.logger.info("PARAMETERS:    " + f" STAKE: {total_stake}      TAU: {tau}     RT:{round_time}     MIN_PEER: {self.minimum_num_peers}     MAX_PEER:{self.maximum_num_peers}    CREATED: {self.broadcast_created_block}     RECEIVED: {self.broadcast_received_block}    PERIOD: {self.period}")
-        params = BlockChainParameters(round_time=round_time, tolerance=tolerance, tau=tau, total_stake=total_stake)
+        self.logger.info("PARAMETERS:    " + f" STAKE: {total_stake}      TAU: {tau}     MINITAU: {miniTau}      RT:{round_time}     MIN_PEER: {self.minimum_num_peers}     MAX_PEER:{self.maximum_num_peers}    CREATED: {self.broadcast_created_block}     RECEIVED: {self.broadcast_received_block}    PERIOD: {period}")
+        params = BlockChainParameters(round_time=round_time, tolerance=tolerance, tau=tau, miniTau=miniTau, total_stake=total_stake, period=period)
         self.bc: BlockChain = BlockChain(params, genesis=genesis, node_id=self.id)
         self.state = State.LISTENING
         self.missed_blocks: list[tuple[Block, bytes]] = []
@@ -115,9 +115,6 @@ class Node:
         self.received_block_data = 0
         self.sent_blocks = 0
         self.sent_block_data = 0
-
-        
-
 
     # TODO: make the log_dir configurable
     def dump_data(self, log_dir: str):
@@ -243,7 +240,7 @@ class Node:
             self.broadcast_message(BlockBroadcast(block, own_id), [peer_id, block.owner_pubkey])
             # TODO: Blocks are retransmitted and stored without even checking if they are valid. This is ok in a simulation, but unsafe for real use.
 
-        if not self.bc.insert(block):
+        if not self.bc.insert_block(block):
             # TODO: missed_blocks grows infinetly for every block received from a peer. After a suficient number of rounds, it will grow too big.
             # It would be reosonable to have a limit to its size and start deleting old blocks, and maybe store peer_id and block seperatelly and without repetition
             self.missed_blocks.append((block, peer_id))
@@ -312,20 +309,28 @@ class Node:
                 # don't log every single round...)
 
                 if self.node_on_consensus == False:
-                    if self.period is not None and self.bc.current_round % self.period == 0:
+                    if self.bc.parameters.period is not None and self.bc.current_round % self.bc.parameters.period == 0:
                         self.node_on_consensus = True
-                        self.logger.info(f"Node is on consensus round {self.bc.current_round}!")
+                        self.logger.info(f"Node is on consensus for period  {self.bc.parameters.period} - round {self.bc.current_round}!")
                     else:
                         continue
-                        
-                self.dump_data("demo/logs")
-                new_block = self.generate_block()
-                if new_block is not None and self.broadcast_created_block: # if dishonest node isnt going to broadcast block, it is also not going to insert in local blockchain
+                
+                #self.dump_data("demo/logs")
+                #new_block = self.generate_block()
+                #if new_block is not None and self.broadcast_created_block: # if dishonest node isnt going to broadcast block, it is also not going to insert in local blockchain
+                #    self.produced_blocks += 1
+                #    self.bc.insert(new_block)
+                #    own_id = self.id if not None else self.config.id
+                #    if self.broadcast_created_block:
+                #        self.broadcast_message(BlockBroadcast(new_block, own_id), [])
+                
+                new_miniblock = self.bc.generate_miniBlock(self.id, self.privkey, self.pubkey.public_bytes_raw(), self.use_mock_transactions)
+                if new_miniblock is not None and self.broadcast_created_block: # if dishonest node isnt going to broadcast block, it is also not going to insert in local blockchain
                     self.produced_blocks += 1
-                    self.bc.insert(new_block)
+                    self.bc.insert_miniBlock(new_miniblock)
                     own_id = self.id if not None else self.config.id
-                    if self.broadcast_created_block:
-                        self.broadcast_message(BlockBroadcast(new_block, own_id), [])
+                    #if self.broadcast_created_block:
+                    #    self.broadcast_message(BlockBroadcast(new_miniblock, own_id), [])
 
             # the 200ms timeout prevents us from busy-waiting
             raw = self.network.read(timeout=200)
