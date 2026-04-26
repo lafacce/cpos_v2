@@ -1,4 +1,5 @@
 from time import time
+from enum import Enum
 from typing import Optional
 import logging
 import random
@@ -7,8 +8,9 @@ import pickle
 import random 
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cpos.core.block import Block, MiniBlock, GenesisBlock
+from cpos.core.block import Block, GenesisBlock
 from cpos.core.blockchain import BlockChain, BlockChainParameters
+from cpos.core.miniBlock import MiniBlock
 from cpos.p2p.network import Network
 
 from cpos.protocol.messages import BlockBroadcast, MiniBlockBroadcast, Hello, Message, ResyncRequest, ResyncResponse, PeerForgetRequest
@@ -30,11 +32,14 @@ class NodeConfig:
     def __str__(self):
         return str(self.__dict__)
 
-class State:
+class State(Enum):
     WAITING        = 0x01,
-    PROPOSALS      = 0x02,
-    LISTENING      = 0x03,
-    RESYNCING      = 0x04,
+    READY          = 0x02,
+    PROPOSALS      = 0x03,
+    ATTESTATION    = 0x04,
+    JUSTIFICATION  = 0x05,
+    FINALIZATION   = 0x06,
+    RESYNCING      = 0x07,
 
 class Node:
     def __init__(self, config: NodeConfig):
@@ -174,59 +179,17 @@ class Node:
         block.signed_node_hash = self.privkey.sign(block.node_hash)
         block.update()
 
-    def handle_new_block(self, block: Block, peer_id: bytes):
-        round = self.bc.current_round
-        tolerance = self.bc.parameters.tolerance
-
-        if block.round not in range(round, round + tolerance + 1):
-            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (outside of tolerance range)")
-            self.discarded_blocks += 1
-            return False
-
-        if block.owner_pubkey == self.pubkey.public_bytes_raw():
-            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (produced by itself)")
-            self.discarded_blocks += 1
-            return False
-
-        block_in_blockchain = self.bc.block_in_blockchain(block)
-        if block_in_blockchain:
-            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (already in blockchain)")
-            self.discarded_blocks += 1
-            return False
-
-        block_in_missed_blocks = any(tup[0].hash.hex() == block.hash.hex() for tup in self.missed_blocks)
-        if block_in_missed_blocks:
-            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (already discarded)")
-            self.discarded_blocks += 1
-            return False
-
-        own_id = self.id if not None else self.config.id
-        #to malicious node do not reply blocks
-        if self.broadcast_received_block:
-            self.broadcast_message(BlockBroadcast(block, own_id), [peer_id, block.owner_pubkey])
-            # TODO: Blocks are retransmitted and stored without even checking if they are valid. This is ok in a simulation, but unsafe for real use.
-
-        if not self.bc.insert_block(block):
-            # TODO: missed_blocks grows infinetly for every block received from a peer. After a suficient number of rounds, it will grow too big.
-            # It would be reosonable to have a limit to its size and start deleting old blocks, and maybe store peer_id and block seperatelly and without repetition
-            self.missed_blocks.append((block, peer_id))
-            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (missed block)")
-            self.discarded_blocks += 1
-            return False
-
-        self.logger.debug(f"Block inserted {block}")
-        self.inserted_blocks += 1
-        return True
-
     def control_number_of_peers(self):
         if len(self.network.known_peers) < self.minimum_num_peers: 
             self.logger.info(f"Number of peers too low, asking more from beacon")
             additional_peerlist = self.network.get_additional_peers_from_beacon() # peers are randomly selected by beacon and come in a random order
             if additional_peerlist is not None:
-                for peer in additional_peerlist: # TODO maybe limit number of peers added here?
+                for peer in additional_peerlist:
                     if peer.id == self.id or peer.id in self.network.known_peers:
                         continue
                     self.network.connect(peer.ip, peer.port, peer.id)
+                    if len(self.network.known_peers) >= self.maximum_num_peers:
+                        break
 
         while len(self.network.known_peers) > self.maximum_num_peers:
             random_peer_id = random.sample(self.network.known_peers, 1)[0]
@@ -237,6 +200,9 @@ class Node:
     def loop(self):
         round = self.bc.genesis.timestamp
         initial_round = self.bc.current_round
+        idle = 0
+        new_miniblock = None
+        new_block = None
         while True:
             if self.config.total_rounds is not None and self.bc.current_round >= initial_round + self.config.total_rounds:
                 self.should_halt = True
@@ -249,27 +215,118 @@ class Node:
             # on round change:
             if round != self.bc.current_round:
                 round = self.bc.current_round
-                self.logger.debug(f"state: {self.state}")
                 self.network.notify_beacon() #  Notifies beacon this node is still alive and connected to the network
-             
+                
+                #TODO: Remove this. Make nodes syncronize to start the round at the same time. 
                 if self.state == State.WAITING:
                     if self.bc.parameters.period is not None and self.bc.current_round % self.bc.parameters.period == 0:
-                        self.state = State.PROPOSALS
+                        self.state = State.READY
                         self.logger.info(f"Node is on consensus for period  {self.bc.parameters.period} - round {self.bc.current_round}!")
+                        self.logger.info(f"Node is on state: {self.state.name}")
+                        # TODO: make the log_dir configurable (and maybe
+                        # don't log every single round...
+                        # TODO: adjust dump
+                        # self.dump_data("demo/logs")
                     else:
+                        self.logger.info(f"Node is NOT on consensus for period  {self.bc.parameters.period} - round {self.bc.current_round}!")
                         continue
+                else:
+                    self.state = State.READY
+                    idle = time()
+                    self.logger.info(f"Node is on state: {self.state.name}") 
+
                 
-                # TODO: make the log_dir configurable (and maybe
-                # don't log every single round...
-                # TODO: adjust dump
-                # self.dump_data("demo/logs")
+            if self.state == State.READY:
+                #TODO Syncronize with other nodes to start the round at the same time
                 new_miniblock = self.bc.generate_miniBlock(self.id, self.privkey, self.pubkey.public_bytes_raw(), self.use_mock_transactions)
-                if new_miniblock is not None and self.broadcast_created_block: # if dishonest node isnt going to broadcast block, it is also not going to insert in local blockchain
-                    if self.bc.insert_miniBlock(new_miniblock):
-                        own_id = self.id if not None else self.config.id
-                        if self.broadcast_created_block:
-                            self.broadcast_message(MiniBlockBroadcast(new_miniblock, own_id), [])
+                idle = time()
+                self.state = State.PROPOSALS
+                self.logger.info(f"Node is on state: {self.state.name}")
                         
+
+            if self.state == State.ATTESTATION:
+                new_block = self.bc.generate_block(self.id, self.privkey, self.pubkey.public_bytes_raw())
+                idel = time()
+                self.state = State.JUSTIFICATION
+                self.logger.info(f"Node is on state: {self.state.name}")
+
+            # the 200ms timeout prevents us from busy-waiting
+            raw = self.network.read(timeout=200)
+            if raw is None:
+                now = time()
+                if self.state == State.PROPOSALS:
+                    #TODO: make timeouts and delays configurable
+                    if  new_miniblock is not None and (now - idle) > 1:
+                        idle = time()
+                        if self.broadcast_created_block: # if dishonest node isnt going to broadcast block, it is also not going to insert in local blockchain
+                            if self.bc.insert_miniBlock(new_miniblock):
+                                own_id = self.id if not None else self.config.id
+                                if self.broadcast_created_block:
+                                    self.broadcast_message(MiniBlockBroadcast(new_miniblock, own_id), [])
+                            new_miniblock = None
+
+                    if  (now - idle) > 3:
+                        idle = time()
+                        self.state = State.ATTESTATION
+                        self.logger.info(f"Node is on state: {self.state.name}")
+
+                if self.state == State.JUSTIFICATION:
+                    if  new_block is not None and (now - idle) > 1:
+                        idle = time()
+                        if self.broadcast_created_block: # if dishonest node isnt going to broadcast block, it is also not going to insert in local blockchain
+                            if self.bc.insert_block(new_block):
+                                own_id = self.id if not None else self.config.id
+                                if self.broadcast_created_block:
+                                    self.broadcast_message(BlockBroadcast(new_block, own_id), [])
+                            new_block = None
+
+                    if  (now - idle) > 3:
+                        idle = time()
+                        self.state = State.FINALIZATION
+                        self.logger.info(f"Node is on state: {self.state.name}")
+
+                #if self.state == State.FINALIZATION:
+                    #TODO: Clear data from previous rounds, and maybe dump some data to analyze later
+                    #if  (now - idle) > 3:
+                    #    self.state = State.READY
+                    #    self.logger.info(f"Node is on state: {self.state.name}")
+                continue
+
+            self.message_count += 1
+            self.total_message_bytes += len(raw)
+
+            msg = Message.deserialize(raw)
+            self.logger.debug(f"new message: {msg}")
+
+            if self.state == State.PROPOSALS:
+                if isinstance(msg, MiniBlockBroadcast):
+                    idle = time()
+                    self.logger.debug(f"Received mini-block from: {msg.peer_id.hex()[0:8]}")
+                    if self.bc.handle_new_miniBlock(msg.miniBlock, self.pubkey.public_bytes_raw()):
+                        self.logger.info(f"MiniBlock received {msg.miniBlock}")
+                        if self.bc.insert_miniBlock(msg.miniBlock):
+                            own_id = self.id if not None else self.config.id
+                            #to malicious node do not reply blocks
+                            if self.broadcast_received_block:
+                                self.broadcast_message(MiniBlockBroadcast(msg.miniBlock, own_id), [msg.peer_id, msg.miniBlock.owner_pubkey])
+            
+            if self.state == State.JUSTIFICATION:  
+                if isinstance(msg, BlockBroadcast):
+                    idle = time()    
+                    self.logger.info(f"Block received {msg.block}")
+                    self.logger.debug(f"Received block from: {msg.peer_id.hex()[0:8]}")
+                    if self.bc.handle_new_block(msg.block, self.pubkey.public_bytes_raw()):
+                        self.logger.info(f"Block received {msg.block}")
+                        if self.bc.insert_block(msg.block):
+                            own_id = self.id if not None else self.config.id
+                            #to malicious node do not reply blocks
+                            if self.broadcast_received_block:
+                                self.broadcast_message(BlockBroadcast(msg.block, own_id), [msg.peer_id, msg.block.owner_pubkey])
+                    
+                    
+                    
+
+
 
             # if we detect a fork, resync with a node that sent a random missed block
             #if self.state == State.LISTENING and self.bc.fork_detected and self.missed_blocks:
@@ -290,30 +347,6 @@ class Node:
             #    self.resyncs += 1
             #    self.logger.info("started resyncing")
 
-            
-
-            # the 200ms timeout prevents us from busy-waiting
-            raw = self.network.read(timeout=200)
-            if raw is None:
-                continue
-
-            self.message_count += 1
-            self.total_message_bytes += len(raw)
-
-            msg = Message.deserialize(raw)
-            self.logger.debug(f"new message: {msg}")
-
-            if self.state == State.PROPOSALS:
-                if isinstance(msg, MiniBlockBroadcast):
-                    self.logger.debug(f"Received mini-block from: {msg.peer_id.hex()[0:8]}")
-                    if self.bc.handle_new_miniBlock(msg.miniBlock, self.pubkey.public_bytes_raw()):
-                        self.logger.info(f"MiniBlock received {msg.miniBlock}")
-                        if self.bc.insert_miniBlock(msg.miniBlock):
-                            own_id = self.id if not None else self.config.id
-                            #to malicious node do not reply blocks
-                            if self.broadcast_received_block:
-                                self.broadcast_message(MiniBlockBroadcast(msg.miniBlock, own_id), [msg.peer_id, msg.miniBlock.owner_pubkey])
-                        
                         # Provavelmente nao vamos usar isso. Talvez no resync
                         #if not self.bc.insert_block(block):
                         #    # TODO: missed_blocks grows infinetly for every block received from a peer. After a suficient number of rounds, it will grow too big.
@@ -322,25 +355,26 @@ class Node:
                         #    self.logger.info(f"discarding block {block.hash.hex()[0:8]} (missed block)")
                         #    self.discarded_blocks += 1
 
+                            
 
-            if self.state == State.LISTENING:
-                if isinstance(msg, BlockBroadcast):
-                    self.handle_new_block(msg.block, msg.peer_id)    
-                    self.received_blocks += 1
-                    self.received_block_data += len(raw)
-                if isinstance(msg, ResyncRequest):
-                    peer_id = msg.peer_id
-                    # make sure we only send stuff after the genesis block
-                    # If there are blocks available at this index, send it
-                    if self.bc.number_of_blocks() > abs(msg.block_index):
-                        block_to_send = self.bc.block_by_index(msg.block_index)
-                        self.send_message(peer_id, ResyncResponse(block_to_send))
-                    # Else, send None to signal there are no blocks that match the request
-                    else:
-                        self.send_message(peer_id, ResyncResponse(None))
-                if isinstance(msg, PeerForgetRequest):
-                    self.logger.info(f"Received forget request from: {msg.peer_id.hex()[0:8]}")
-                    self.network.forget_peer(msg.peer_id)
+            #if self.state == State.LISTENING:
+            #    if isinstance(msg, BlockBroadcast):
+            #        self.handle_new_block(msg.block, msg.peer_id)    
+            #        self.received_blocks += 1
+            #        self.received_block_data += len(raw)
+            #    if isinstance(msg, ResyncRequest):
+            #        peer_id = msg.peer_id
+            #        # make sure we only send stuff after the genesis block
+            #        # If there are blocks available at this index, send it
+            #        if self.bc.number_of_blocks() > abs(msg.block_index):
+            #            block_to_send = self.bc.block_by_index(msg.block_index)
+            #            self.send_message(peer_id, ResyncResponse(block_to_send))
+            #        # Else, send None to signal there are no blocks that match the request
+            #        else:
+            #            self.send_message(peer_id, ResyncResponse(None))
+            #    if isinstance(msg, PeerForgetRequest):
+            #        self.logger.info(f"Received forget request from: {msg.peer_id.hex()[0:8]}")
+            #        self.network.forget_peer(msg.peer_id)
 
             #if self.state == State.RESYNCING:
             #    if isinstance(msg, ResyncResponse):

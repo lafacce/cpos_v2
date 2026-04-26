@@ -4,7 +4,8 @@ from base64 import b64encode, b64decode
 import pickle
 from typing import Self
 
-from cpos.core.block import Block,MiniBlock
+from cpos.core.block import Block
+from cpos.core.miniBlock import MiniBlock
 from cpos.core.transactions import TransactionList
 
 class MessageCode:

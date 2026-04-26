@@ -82,15 +82,8 @@ class BlockChainDatabase:
         return block_hashes
 
     def insert_block(self, block: Block, arrive_time: int, confirmed: int):
-        database_atributes = [block.index, block.hash.hex(), block.round, block.parent_hash.hex(), block.hash.hex(), block.owner_pubkey.hex(), block.signed_node_hash.hex(), block.merkle_root.hex(), block.ticket_number,
-                            block.transactions, arrive_time, 0, confirmed, 0, block.proof_hash.hex(), 0, 0] # TODO hash as id? TODO implement real merkle tree
-        INSERT_QUERY = "INSERT INTO localChains (block_index, id, round, parent_hash, hash, owner_pubkey, signed_node_hash, merkle_root, ticket_number, miniBlocks, arrive_time, fork, confirmed, subuser, proof_hash, numSuc, round_stable) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-        self.cursor.execute(INSERT_QUERY, database_atributes)
-        connection.commit()
-
-    def insert_genesis_block(self, block: Block, arrive_time: int, confirmed: int):
-        database_atributes = [block.index, block.hash.hex(), block.round, block.parent_hash.hex(), block.hash.hex(), block.owner_pubkey.hex(), block.signed_node_hash.hex(), block.miniBlocks, block.ticket_number,
-                              str([]), arrive_time, 0, confirmed, 0, block.proof_hash.hex(), 0, 0] # TODO hash as id? TODO implement real merkle tree
+        database_atributes = [block.index, block.hash.hex(), block.round, block.parent_hash.hex(), block.hash.hex(), block.owner_pubkey.hex(), block.signed_node_hash.hex(), block.miniBlocks_hash.hex(), block.ticket_number,
+                            block.miniBlocks, arrive_time, 0, confirmed, 0, block.proof_hash.hex(), 0, 0] # TODO hash as id? TODO implement real merkle tree
         INSERT_QUERY = "INSERT INTO localChains (block_index, id, round, parent_hash, hash, owner_pubkey, signed_node_hash, merkle_root, ticket_number, miniBlocks, arrive_time, fork, confirmed, subuser, proof_hash, numSuc, round_stable) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         self.cursor.execute(INSERT_QUERY, database_atributes)
         connection.commit()
@@ -143,7 +136,10 @@ class BlockChainDatabase:
 
     def get_proof_hash_of_block(self, index):
         self.cursor.execute(f"SELECT proof_hash FROM localChains WHERE block_index = {index}")
-        proof_hash = bytes.fromhex(self.cursor.fetchone()[0])
+        row = self.cursor.fetchone()
+        if row is None:
+            return None
+        proof_hash = bytes.fromhex(row[0])
         return proof_hash
     
     def get_round_of_block(self, index):
@@ -213,6 +209,13 @@ class BlockChainDatabase:
         TEMP_QUERY = f"INSERT INTO tempMiniBlocks (hash) VALUES (%s)"
         self.cursor.execute(TEMP_QUERY, (miniBlock.hash.hex(),))
         connection.commit()
+    
+    def get_miniBlocks(self):
+        hash_list = []
+        self.cursor.execute("SELECT hash FROM tempMiniBlocks")
+        rows = self.cursor.fetchall()
+        hash_list = [row[0] for row in rows]
+        return hash_list
 
     def clear_tempMiniBlocks(self):
         TRUNCATE_QUERY = "TRUNCATE TABLE tempMiniBlocks"
@@ -246,7 +249,7 @@ class BlockChain:
             self.genesis: GenesisBlock = GenesisBlock()
 
         self.blockChainDatabase.get_cursor()
-        self.blockChainDatabase.insert_genesis_block(genesis, 0, 1) # TODO CHECK ARRIVE TIME OF GENESIS BLOCK, genesis block is altomatically confirmed
+        self.blockChainDatabase.insert_block(genesis, 0, 1) # TODO CHECK ARRIVE TIME OF GENESIS BLOCK, genesis block is altomatically confirmed
         # TODO: this stores the number of successful sortitions that have
         # a certain block into the foreign blockchain view; document/find
         # better naming later
@@ -366,48 +369,114 @@ class BlockChain:
     def _log_failed_insertion(self, block: Block, reason: str):
         self.logger.info(f"discarding block {block.hash.hex()} ({reason})")
 
-    # try to insert a block at the end of the chain
-    def insert_block(self, block: Block) -> bool:
+    def generate_block(self, id: bytes, privkey: Ed25519PrivateKey, public_key: bytes) -> Optional[Block]:
+        self.blockChainDatabase.get_cursor()
+        stake = self.lookup_node_stake(id)
+        candidate: Optional[Block] = None
+        for i in range(0, stake):
+            
+            miniBlockList = self.blockChainDatabase.get_miniBlocks()
 
-        if self.block_in_blockchain(block):
+            block = Block(parent_hash=self.blockChainDatabase.get_last_block_hash(),
+                                  miniBlockList=miniBlockList, 
+                                  owner_pubkey=public_key,
+                                  signed_node_hash=b"",
+                                  round=self.current_round,
+                                  index=self.blockChainDatabase.number_of_blocks(),
+                                  ticket_number=i)
+
+            block.sign_block(privkey, block)
+
+            block.ticket_number = i
+
+            if not self.validate_block(block):
+                continue
+
+            self.logger.debug(f"block candidate: {block}")
+            
+            if candidate is None or block.proof_hash < candidate.proof_hash:
+                candidate = block
+
+        if candidate is not None:
+            self.logger.info(f"successfully generated a block: {candidate}")
+        
+        self.blockChainDatabase.close_cursor()
+        return candidate
+
+    # TODO: Add miniBlocks validations
+    def insert_block(self, block: Block) -> bool:
+        self.blockChainDatabase.get_cursor()
+        if self.blockChainDatabase.block_in_blockchain(block):
             self._log_failed_insertion(block, "already in local chain")
+            self.blockChainDatabase.close_cursor()
             return False
 
         if block.index == 0:
             self._log_failed_insertion(block, "new genesis block")
+            self.blockChainDatabase.close_cursor()
             return False
         
-        if block.index > self.number_of_blocks():
+        if block.index > self.blockChainDatabase.number_of_blocks():
             self._log_failed_insertion(block, "gap in local chain")
+            self.blockChainDatabase.close_cursor()
             return False
 
-        if not self.has_correct_parent(block):
+        if not self.blockChainDatabase.has_correct_parent(block):
             self._log_failed_insertion(block, f"parent mismatch")
+            self.blockChainDatabase.close_cursor()
             return False
 
         winning_tickets = self.validate_block(block)
         if not winning_tickets:
             self._log_failed_insertion(block, "validation failed")
+            self.blockChainDatabase.close_cursor()
             return False
-        else:
-            self.update_successfull_sortition(block.index, winning_tickets)
 
         # in case there is already a block present at block.index
-        if self.number_of_blocks() > block.index:
-            if block.proof_hash >= self.get_proof_hash_of_block(block.index):
-                self._log_failed_insertion(block, f"smaller proof_hash")
-                return False
+        proof_hash = self.blockChainDatabase.get_proof_hash_of_block(block.index)
+        if proof_hash is not None and proof_hash > block.proof_hash:
+            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (smaller proof_hash)")
+            self.blockChainDatabase.close_cursor()
+            return False
         
         # reject block if it was added in the same round as the parent
         parent_idx = block.index - 1
-
-        if block.round <= self.get_round_of_block(parent_idx):
+        if block.round <= self.blockChainDatabase.get_round_of_block(parent_idx):
             self._log_failed_insertion(block, "same round as parent")
+            self.blockChainDatabase.close_cursor()
             return False
         
         self.logger.info(f"inserting {block}")
         self.blockChainDatabase.delete_blocks_since(block.index)
         self.blockChainDatabase.insert_block(block, time(), 0) # TODO CHECK ARRIVAL TIME
+        self.blockChainDatabase.close_cursor()
+        return True
+
+    def handle_new_block(self, block: Block, public_key: bytes):
+        if block.round != self.current_round:
+            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (block is not from current round)")
+            return False
+
+        if block.owner_pubkey == public_key:
+            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (produced by itself)")
+            return False
+
+        self.blockChainDatabase.get_cursor()
+        block_in_blockchain = self.blockChainDatabase.block_in_blockchain(block)
+        if block_in_blockchain:
+            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (already in blockchain)")
+            self.blockChainDatabase.close_cursor()
+            return False
+
+        # in case there is already a block present at block.index
+        proof_hash = self.blockChainDatabase.get_proof_hash_of_block(block.index)
+        if proof_hash is not None and proof_hash > block.proof_hash:
+            self.logger.info(f"discarding block {block.hash.hex()[0:8]} (smaller proof_hash)")
+            self.blockChainDatabase.close_cursor()
+            return False
+
+        self.logger.debug(f"Block received {block}")
+        self.blockChainDatabase.close_cursor()
         return True
 
     #def merge_chain(self, foreign_blocks: list[Block]) -> bool:
@@ -456,6 +525,7 @@ class BlockChain:
         return b
 
     def validate_miniBlock(self, miniBlock: MiniBlock) -> Optional[int]:
+        # TODO: Maybe we should validate the transactions in the miniBlock here as well
         pubkey = None
         try:
             pubkey = Ed25519PublicKey.from_public_bytes(miniBlock.owner_pubkey)
@@ -481,7 +551,7 @@ class BlockChain:
         
         return winning_tickets
 
-    def generate_miniBlock(self, id: bytes, privkey: Ed25519PrivateKey, public_key: bytes, use_mock_transactions: bool) -> Optional[Block]:
+    def generate_miniBlock(self, id: bytes, privkey: Ed25519PrivateKey, public_key: bytes, use_mock_transactions: bool) -> Optional[MiniBlock]:
         self.blockChainDatabase.get_cursor()
         stake = self.lookup_node_stake(id)
         candidate: Optional[MiniBlock] = None
@@ -545,13 +615,6 @@ class BlockChain:
             self._log_failed_insertion(miniBlock, "validation failed")
             self.blockChainDatabase.close_cursor()
             return False
-
-        # in case there is already a block present at block.index
-        if self.blockChainDatabase.number_of_blocks() > miniBlock.index:
-            if miniBlock.proof_hash >= self.blockChainDatabase.get_proof_hash_of_block(miniBlock.index):
-                self._log_failed_insertion(miniBlock, f"smaller proof_hash")
-                self.blockChainDatabase.close_cursor()
-                return False
         
         # reject block if it was added in the same round as the parent
         parent_idx = miniBlock.index - 1
@@ -583,6 +646,6 @@ class BlockChain:
             self.blockChainDatabase.close_cursor()
             return False
 
-        self.logger.debug(f"miniBlock received and inserted {miniBlock}")   
+        self.logger.debug(f"miniBlock received {miniBlock}")   
         self.blockChainDatabase.close_cursor()    
         return True

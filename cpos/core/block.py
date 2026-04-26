@@ -1,15 +1,14 @@
 from __future__ import annotations
 from hashlib import sha256
-from cpos.core.miniBlock import MiniBlock
 from time import time
 
 class Block:
     # TODO: document the following changes:
-    # - Use regular SHA-256 hashes instead of Merkle tree roots for transactions
+    # - Use regular SHA-256 hashes instead of Merkle tree roots for miniblocks
     # - Use the node's pubkey as its ID
     # - When calculating the node hash, use the hash of the previous block instead
     #   of the epoch head
-    def __init__(self, parent_hash: bytes, miniBlockList: MiniBlockList,
+    def __init__(self, parent_hash: bytes, miniBlockList: List[str],
                  owner_pubkey: bytes, signed_node_hash: bytes,
                  round: int, index: int, ticket_number: int):
         self.parent_hash = parent_hash
@@ -17,14 +16,13 @@ class Block:
         self.signed_node_hash = signed_node_hash
         self.round = round
         self.index = index
-        self.miniBlocks = miniBlockList.miniBlocks if miniBlockList is not None else []
+        self.miniBlocks = str(miniBlockList if miniBlockList is not None else [])
+        self.miniBlocks_hash = sha256(b"".join([mb.encode() for mb in self.miniBlocks])).digest() if miniBlockList is not None else b""
         self.ticket_number = ticket_number
 
         self.update()
 
-    def update(self):
-        # TODO: TransactionList should implement a get_hash() function
-        
+    def update(self):        
         self.node_hash = self.calculate_node_hash()
         self.proof_hash = self.calculate_proof_hash()
         self.hash = self.calculate_hash()
@@ -42,7 +40,10 @@ class Block:
                       self.ticket_number.to_bytes(4, "little", signed=False)).digest()
 
     def calculate_hash(self) -> bytes:
-        return sha256(self.proof_hash + self.parent_hash + self.transaction_hash).digest()
+        return sha256(self.proof_hash + self.parent_hash + self.miniBlocks_hash).digest()
+    
+    def sign_block(self, privkey: Ed25519PrivateKey, block: Block):
+        self.signed_node_hash = privkey.sign(block.node_hash)
 
     def __str__(self):
         return f"Block(hash={self.hash.hex()[0:8]}, parent={self.parent_hash.hex()[0:8]}, owner={self.owner_pubkey.hex()[0:8]}, round={self.round}, index={self.index}, proof_hash={self.proof_hash.hex()[0:8]})"
@@ -59,6 +60,7 @@ class GenesisBlock(Block):
         self.owner_pubkey = b"\x00"
         self.proof_hash = b"\x00"
         self.miniBlocks = b"\x00"
+        self.miniBlocks_hash = b"\x00"
         self.signed_node_hash = b"\x00"
         self.round = 0
         self.index = 0

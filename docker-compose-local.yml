@@ -9,7 +9,7 @@ services:
     environment:
       - PORT=9000
       - NUM_PEERS_SEND=3           # number of peers sent by beacon to nodes who just entered or need more
-      - ROUND_TIME=6
+      - ROUND_TIME=20
     command: /bin/bash demo/run_beacon.sh
 
   node:
@@ -28,14 +28,14 @@ services:
       - BEACON_PORT=9000
       - PORT=8888
       - NUMBER_OF_ROUNDS=20
-      - ROUND_TIME=6
+      - ROUND_TIME=20
       - PERIOD=4
       - TOLERANCE=2
       - MINITAU=3
       - TAU=2
       - TOTAL_STAKE=6
       - MOCK_TRANSACTIONS=true           # set to true to use randomly generated transactions
-      - MAXIMUM_NUM_PEERS=3              # maximum number of peers a node can have
+      - MAXIMUM_NUM_PEERS=4              # maximum number of peers a node can have
       - MINIMUM_NUM_PEERS=2              # minimum number of peers a node can have
       - BROADCAST_CREATED_BLOCK=true     
       - BROADCAST_RECEIVED_BLOCK=true

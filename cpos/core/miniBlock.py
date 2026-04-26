@@ -59,43 +59,4 @@ class MiniBlock:
                       ticket_number=miniBlock_info[8])
         return b
         
-class MiniBlockList:
-    def __init__(self, miniBlockList: List[MiniBlock] = None):
-        self.miniBlocks = miniBlockList if miniBlockList is not None else []
-        self.miniBlockParent = b"\x00"
-        self.round = -1
-        self.index = -1
-        self.timestamp = time()
-    
-    def __str__(self):
-        return (
-            f"MiniBlockList(hash={self.miniBlocks}, parent={self.miniBlockParent.hex()}, "
-                        f"round={self.round}, index={self.index}, timestamp={self.timestamp})"
-        )
-
-    def insert_miniBlock(self, miniBlock: MiniBlock):
-        if miniBlock is None:
-            return
-
-        if self.miniBlocks is None or len(self.miniBlocks) == 0:
-            self.miniBlockParent = miniBlock.parent_hash
-            self.round = miniBlock.round
-            self.index = miniBlock.index
-
-        if miniBlock.parent_hash != self.miniBlockParent:
-            return
-        self.miniBlocks.append(miniBlock.hash)
-    
-    def clear_miniBlocks(self):
-        self.miniBlocks = []
-        self.miniBlockParent = b"\x00"
-        self.round = -1
-        self.index = -1
-        self.timestamp = time()
-
-    def get_hash(self) -> bytes:
-        if self.miniBlocks is not None and len(self.miniBlocks) > 0:
-            return sha256(''.join(self.miniBlocks).encode()).digest()
-        else:
-            return None
     
