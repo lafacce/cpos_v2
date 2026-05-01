@@ -96,7 +96,12 @@ class BlockChainDatabase:
         return block_in_blockchain
     
     def number_of_blocks(self):
-        self.cursor.execute("SELECT COUNT(*) FROM localChains")
+        self.cursor.execute("SELECT COUNT(block_index) FROM localChains")
+        count = self.cursor.fetchone()[0]
+        return count
+
+    def number_of_miniblocks(self):
+        self.cursor.execute("SELECT COUNT(round) as miniblocks from  localMiniBlocks;")
         count = self.cursor.fetchone()[0]
         return count
 
@@ -649,3 +654,15 @@ class BlockChain:
         self.logger.debug(f"miniBlock received {miniBlock}")   
         self.blockChainDatabase.close_cursor()    
         return True
+    
+    def number_of_blocks(self):
+        self.blockChainDatabase.get_cursor()
+        count = self.blockChainDatabase.number_of_blocks()
+        self.blockChainDatabase.close_cursor()
+        return count
+
+    def number_of_miniblocks(self):
+        self.blockChainDatabase.get_cursor()
+        count = self.blockChainDatabase.number_of_miniblocks()
+        self.blockChainDatabase.close_cursor()
+        return count

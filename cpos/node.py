@@ -129,10 +129,8 @@ class Node:
         #self.logger.warning(f"Dumping data to {filepath}...")
         try:
             with open(filepath, "wb") as file:
-                blockchain_info = [self.bc.parameters.round_time, self.bc.last_confirmation_delay, self.bc.current_round, self.bc.blockChainDatabase.number_of_blocks()]
-                debug_info = [self.produced_blocks, self.received_blocks, self.discarded_blocks, self.inserted_blocks, self.bc.forks_detected ,self.resyncs, self.successfull_resyncs, sorted([i.hex()[0:8] for i in self.network.known_peers])]
-                network_info = [self.received_blocks, self.received_block_data, self.sent_blocks, self.sent_block_data]
-                data = pickle.dumps((self.bc.blockChainDatabase.last_n_blocks(self.bc.blockChainDatabase.number_of_blocks()), self.bc.blockChainDatabase.last_confirmed_block_info(), self.bc.confirmation_delays, self.message_count, self.total_message_bytes, blockchain_info, debug_info, network_info))
+                blockchain_info = [self.bc.parameters.round_time, self.bc.number_of_blocks(), self.bc.number_of_miniblocks()]
+                data = pickle.dumps(blockchain_info)
                 file.write(data)
                 file.flush()
                 file.close()
@@ -284,12 +282,8 @@ class Node:
                         idle = time()
                         self.state = State.FINALIZATION
                         self.logger.info(f"Node is on state: {self.state.name}")
+                        self.dump_data("demo/logs")
 
-                #if self.state == State.FINALIZATION:
-                    #TODO: Clear data from previous rounds, and maybe dump some data to analyze later
-                    #if  (now - idle) > 3:
-                    #    self.state = State.READY
-                    #    self.logger.info(f"Node is on state: {self.state.name}")
                 continue
 
             self.message_count += 1
