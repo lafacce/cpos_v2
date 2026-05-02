@@ -263,7 +263,7 @@ class Node:
                                     self.broadcast_message(MiniBlockBroadcast(new_miniblock, own_id), [])
                             new_miniblock = None
 
-                    if  (now - idle) > 3:
+                    if  (now - idle) > 5:
                         idle = time()
                         self.state = State.ATTESTATION
                         self.logger.info(f"Node is on state: {self.state.name}")
@@ -278,7 +278,7 @@ class Node:
                                     self.broadcast_message(BlockBroadcast(new_block, own_id), [])
                             new_block = None
 
-                    if  (now - idle) > 3:
+                    if  (now - idle) > 5:
                         idle = time()
                         self.state = State.FINALIZATION
                         self.logger.info(f"Node is on state: {self.state.name}")
