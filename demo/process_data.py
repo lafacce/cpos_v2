@@ -61,14 +61,7 @@ def main():
             for block_delay in confirmation_delays:
                 if not block_delay[1] in smallest_confirmation_delays or smallest_confirmation_delays[block_delay[1]] > block_delay[2]:
                     smallest_confirmation_delays[block_delay[1]] = block_delay[2]
-        print(f"************** RAW DATA *******************************")
-        print(f"received_blocks       = {received_blocks}")
-        print(f"received_block_data   = {received_block_data}")
-        print(f"sent_blocks           = {sent_blocks}")
-        print(f"sent_block_data       = {sent_block_data}")
-        print(f"blocks_onChain        = {blocks_onChain}")
-        print(f"*******************************************************")
-        
+        print(f"Blocks on Chain = {blocks_onChain}")        
         print(f"Produced blocks: {debug_info[0]},   Received Blocks: {debug_info[1]},   Discarded Blocks: {debug_info[2]}, Inserted Blocks: {debug_info[3]},  Forks Detected: {debug_info[4]},    Resyncs: {debug_info[5]},    Successfull Resyncs: {debug_info[6]}, Known Peers: {len(debug_info[7])}")
         print(f"Overturns: {len(ini_confirmation_delays) - len(confirmation_delays)}")
         print(f"-------------------------------------\n")
