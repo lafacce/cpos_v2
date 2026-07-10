@@ -4,10 +4,13 @@ from cpos.p2p.peer import Peer
 
 class MessageCode:
     UNIMPLEMENTED = 0xFF,
-    HELLO = 0x0,
-    PEERLIST = 0x1,
-    PEER_LIST_REQUEST = 0x2,
-    NOTIFY_BEACON = 0x3,
+    NOTIFY_BEACON = 0x00,
+    HELLO = 0x1,
+    BLOCK_BROADCAST = 0x2,
+    PEER_LIST_REQUEST = 0x3,
+    PEER_LIST = 0x4,
+    PEER_FORGET_REQUEST = 0x5,
+    SMR = 0x6,
 
 class Message:
     def __init__(self, code):
@@ -33,7 +36,7 @@ class Hello(Message):
 
 class PeerList(Message):
     def __init__(self, peerlist: list[Peer]):
-        self.code = MessageCode.PEERLIST
+        self.code = MessageCode.PEER_LIST
         self.peers = peerlist
 
     def __str__(self):

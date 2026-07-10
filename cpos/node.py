@@ -1,4 +1,4 @@
-from time import time
+import time
 from typing import Optional
 import logging
 import random
@@ -12,9 +12,9 @@ from cpos.core.blockchain import BlockChain, BlockChainParameters
 from cpos.core.transactions import TransactionList, MockTransactionList
 from cpos.p2p.network import Network
 
-from cpos.protocol.messages import BlockBroadcast, Hello, Message, ResyncRequest, ResyncResponse, PeerForgetRequest
+from cpos.protocol.messages import BlockBroadcast, Hello, Message, ResyncRequest, ResyncResponse, PeerForgetRequest, SMR, Ping, Pong
 
-from cpos.p2p.peer import Peer
+from cpos.p2p.peer import Peer, State
 
 
 class NodeConfig:
@@ -31,10 +31,6 @@ class NodeConfig:
 
     def __str__(self):
         return str(self.__dict__)
-
-class State:
-    LISTENING = 0x01,
-    RESYNCING = 0x02,
 
 class Node:
     def __init__(self, config: NodeConfig):
@@ -75,6 +71,8 @@ class Node:
         logger.addHandler(handler)
         self.logger = logger
 
+        self.ip :str= None
+        self.port :int = -1
         self._init_network()
 
         # this is an improvised hack for demo purposes, here we should
@@ -96,7 +94,7 @@ class Node:
         self.logger.info("PARAMETERS:    " + f" STAKE: {total_stake}      TAU: {tau}     RT:{round_time}     MIN_PEER: {self.minimum_num_peers}     MAX_PEER:{self.maximum_num_peers}    CREATED: {self.broadcast_created_block}     RECEIVED: {self.broadcast_received_block}    PERIOD: {self.period}")
         params = BlockChainParameters(round_time=round_time, tolerance=tolerance, tau=tau, total_stake=total_stake)
         self.bc: BlockChain = BlockChain(params, genesis=genesis, node_id=self.id)
-        self.state = State.LISTENING
+        self.state = State.INITIAL
         self.missed_blocks: list[tuple[Block, bytes]] = []
         self.received_resync_blocks: list[Block] = []
         
@@ -116,7 +114,8 @@ class Node:
         self.sent_blocks = 0
         self.sent_block_data = 0
 
-        
+        self.neighbors: list[Peer] = []
+        self.connected_neighbors = 0
 
 
     # TODO: make the log_dir configurable
@@ -140,12 +139,14 @@ class Node:
     def _init_network(self):
         self.network = Network(self.id, self.config.port, self.config.beacon_ip, self.config.beacon_port)
         self.config.peerlist = self.network.get_peerlist_from_beacon()
-
-        if self.config.peerlist is not None:
-            for peer in self.config.peerlist:
-                if peer.id == self.id:
-                    continue
-                self.network.connect(peer.ip, peer.port, peer.id)
+        host_peer = None
+        for aux in self.config.peerlist:
+            if aux.id == self.id:
+                host_peer = aux
+                break
+        if host_peer is not None:
+            self.ip = host_peer.ip
+            self.port = host_peer.port
 
     def send_message(self, dest_peer_id: bytes, msg: Message):
         if isinstance(msg, BlockBroadcast):
@@ -166,12 +167,12 @@ class Node:
                 self.sent_blocks += 1
                 self.sent_block_data += len(msg.serialize())
                 self.send_message(peer, msg)
-
+    
     def greet_peers(self):
         for peer_id in self.network.known_peers:
             msg = Hello(self.id, self.config.port)
             self.send_message(peer_id, msg)
-
+    
     def sign_block(self, block: Block):
         block.signed_node_hash = self.privkey.sign(block.node_hash)
         block.update()
@@ -256,67 +257,128 @@ class Node:
         return True
 
     def control_number_of_peers(self):
-        if len(self.network.known_peers) < self.minimum_num_peers: 
-            self.logger.info(f"Number of peers too low, asking more from beacon")
-            additional_peerlist = self.network.get_additional_peers_from_beacon() # peers are randomly selected by beacon and come in a random order
-            if additional_peerlist is not None:
-                for peer in additional_peerlist: # TODO maybe limit number of peers added here?
-                    if peer.id == self.id or peer.id in self.network.known_peers:
-                        continue
-                    self.network.connect(peer.ip, peer.port, peer.id)
 
-        while len(self.network.known_peers) > self.maximum_num_peers:
-            random_peer_id = random.sample(self.network.known_peers, 1)[0]
-            self.logger.info(f" Too many peers: {len(self.network.known_peers)}, forgetting peer: {random_peer_id.hex()[0:8]}")
-            self.send_message(random_peer_id, PeerForgetRequest(self.id))
-            self.network.forget_peer(random_peer_id)
+        if self.connected_neighbors < self.minimum_num_peers: 
+            self.logger.info(f"Number of peers too low ({self.connected_neighbors} < {self.minimum_num_peers}), asking more from beacon")
+            additional_peerlist = self.network.get_additional_peers_from_beacon() # peers are randomly selected by beacon and come in a random order
+            if additional_peerlist is None:
+                self.logger.error(f"Beacon has returned an empty peerlist")
+                return
+
+            for peer in additional_peerlist:
+
+                if peer.id == self.id:
+                    self.logger.info(f"Peer {peer} is itself, skipping")
+                    continue
+                
+                neighbor = None
+                for aux in self.neighbors:
+                    if peer.id == aux.id:
+                        self.logger.info(f"Peer {peer} is already in neighbors")
+                        neighbor = aux
+                        break
+                
+                if neighbor is not None and neighbor.connected is True:
+                    self.logger.info(f"Already connected to peer {peer}, skipping")
+                    continue
+
+                if neighbor is not None:
+                    self.neighbors.remove(neighbor) 
+
+                if peer.id not in self.network.known_peers:
+                    if (self.network.connect(peer.ip, peer.port, peer.id) is False):
+                        self.logger.error(f"Failed to connect to peer {peer}, skipping")
+                        continue                
+
+                if (self.send_message(peer.id, Ping(self.ip, self.id, self.port)) is False):
+                    self.logger.error(f"Failed to Ping to peer {peer}, skipping")
+                    continue
+
+                self.logger.error(f"Ping sent to peer {peer}")
+                self.neighbors.append(peer)
+            
+                if len(self.neighbors) == self.maximum_num_peers:
+                    break
+
+            self.logger.info(f"Neighbors: {len(self.neighbors)} of {self.minimum_num_peers} minimum, {self.maximum_num_peers} maximum")
+
+        
+        while len(self.neighbors) > self.maximum_num_peers:
+            random_peer = random.sample(self.neighbors, 1)
+            self.logger.info(f" Too many peers: {len(self.neighbors)}, forgetting peer: {random_peer[0].id.hex()[0:8]}")
+            self.send_message(random_peer[0].id, PeerForgetRequest(self.id))
+            self.network.disconnect(random_peer[0].id, random_peer[0].port, random_peer[0].id)
+            self.neighbors.remove(random_peer[0])
 
     def loop(self):
-        round = self.bc.genesis.timestamp
-        initial_round = self.bc.current_round
+        
+        #self.greet_peers()
+        initial_round = 0
+        round = 0
+        self.bc.current_round = 0
+        last_message_time = time.time()
+        self.logger.info(f"Node is on state: {self.state.name}")
         while True:
-            if self.config.total_rounds is not None and self.bc.current_round >= initial_round + self.config.total_rounds:
-                self.should_halt = True
+            #if self.config.total_rounds is not None and self.bc.current_round >= initial_round + self.config.total_rounds:
+            #    self.should_halt = True
 
             if self.should_halt:
                 self.logger.error("halted")
                 break
             
-            # if we detect a fork, resync with a node that sent a random missed block
-            if self.state == State.LISTENING and self.bc.fork_detected and self.missed_blocks:
-                stopResyncing = False
-                while True:
-                    if len(self.missed_blocks) == 0:
-                        stopResyncing = True
-                        break
-                    missed: tuple[Block, bytes] = random.choice(self.missed_blocks)
-                    self.missed_blocks.remove(missed)
-                    # Start by asking for its last block
-                    request_index = -1
-                    if self.send_message(missed[1], ResyncRequest(self.id, request_index)):
-                        break
-                if stopResyncing:
-                    continue
-                self.state = State.RESYNCING
-                self.resyncs += 1
-                self.logger.info("started resyncing")
+            self.control_number_of_peers()
+#            # if we detect a fork, resync with a node that sent a random missed block
+#            if self.state == State.LISTENING and self.bc.fork_detected and self.missed_blocks:
+#                stopResyncing = False
+#                while True:
+#                    if len(self.missed_blocks) == 0:
+#                        stopResyncing = True
+#                        break
+#                    missed: tuple[Block, bytes] = random.choice(self.missed_blocks)
+#                    self.missed_blocks.remove(missed)
+#                    # Start by asking for its last block
+#                    request_index = -1
+#                    if self.send_message(missed[1], ResyncRequest(self.id, request_index)):
+#                        break
+#                if stopResyncing:
+#                    continue
+#                self.state = State.RESYNCING
+#                self.resyncs += 1
+#                self.logger.info("started resyncing")
 
-            self.bc.update_round()
+            now = time.time()
+            if self.state == State.INITIAL:
+                #self.state = State.INITIALIZING
+                #self.logger.info(f"Node is on state: {self.state.name}")
+                #for peer in self.neighbors:
+                #    if (self.send_message(peer.id, SMR(self.ip, self.port, self.id, self.bc.current_round, self.state))) is False:
+                #        self.logger.error(f"Failed to send SMR message to peer {peer}, skipping")
+                #        self.neighbors.remove(peer)
+                #        self.network.forget_peer(peer.id)
+                #        continue
+                #    self.logger.info(f"sent SMR message to peer {peer.id.hex()[0:8]}")
+                last_message_time = now
+
+            if self.state == State.INITIALIZING and (now - last_message_time > 1):
+                #for peer in self.neighbors:
+                #    if not peer.connected:
+                #        if (self.send_message(peer.id, SMR(self.ip, self.port, self.id, self.bc.current_round, self.state))) is False:
+                #            self.logger.error(f"Failed to send SMR message to peer {peer}, skipping")
+                #            self.neighbors.remove(peer)
+                #            self.network.forget_peer(peer.id)
+                #        else:
+                #            self.logger.info(f"sent SMR message to peer {peer.id.hex()[0:8]}")
+                last_message_time = now
+
+            
             # on round change:
-            if round != self.bc.current_round:
+            if (self.state == State.PROPOSALS):
 
                 round = self.bc.current_round
                 self.logger.debug(f"state: {self.state}")
                 self.network.notify_beacon() #  Notifies beacon this node is still alive and connected to the network
                 # TODO: make the log_dir configurable (and maybe
                 # don't log every single round...)
-
-                if self.node_on_consensus == False:
-                    if self.period is not None and self.bc.current_round % self.period == 0:
-                        self.node_on_consensus = True
-                        self.logger.info(f"Node is on consensus round {self.bc.current_round}!")
-                    else:
-                        continue
                         
                 self.dump_data("demo/logs")
                 new_block = self.generate_block()
@@ -326,19 +388,85 @@ class Node:
                     own_id = self.id if not None else self.config.id
                     if self.broadcast_created_block:
                         self.broadcast_message(BlockBroadcast(new_block, own_id), [])
+            
 
             # the 200ms timeout prevents us from busy-waiting
             raw = self.network.read(timeout=200)
             if raw is None:
                 continue
-
+            
+            last_message_time = time.time()
             self.message_count += 1
             self.total_message_bytes += len(raw)
 
             msg = Message.deserialize(raw)
             self.logger.debug(f"new message: {msg}")
 
-            if self.state == State.LISTENING:
+            if isinstance(msg, Ping):
+                self.logger.info(f"Received Ping from peer {msg.peer_id.hex()[0:8]}")
+
+                if self.connected_neighbors >= self.maximum_num_peers:
+                    self.logger.info(f"Too many peers: {self.connected_neighbors}, ignoring ping from peer {msg.peer_id.hex()[0:8]}")
+                else:
+                    ping_peer = None
+                    for aux in self.neighbors:
+                        if msg.peer_id == aux.id:
+                            ping_peer = aux
+                            self.neighbors.remove(ping_peer)
+
+                    if ping_peer is None:
+                        self.logger.info(f"Peer {msg.peer_id.hex()[0:8]} is not in neighbors, adding it")    
+                        ping_peer = Peer(msg.peer_ip, msg.peer_port, msg.peer_id)
+                
+                    ping_peer.update_state(State.INITIAL, -1, True)
+               
+                    if (self.send_message(msg.peer_id, Pong(self.ip,self.id, self.port)) is False):
+                        self.logger.error(f"Failed to send Pong to peer {msg.peer_id.hex()[0:8]}")
+                    else:
+                        self.neighbors.append(ping_peer)
+                        self.connected_neighbors += 1
+                        self.logger.info(f"Pong sent to peer {msg.peer_id.hex()[0:8]}")
+
+            if isinstance(msg, Pong):
+                self.logger.info(f"Received Pong from peer {msg.peer_id.hex()[0:8]}")
+                pong_peer = None
+                for aux in self.neighbors:
+                    if msg.peer_id == aux.id:
+                        pong_peer = aux
+                        self.neighbors.remove(pong_peer)
+
+                if pong_peer is None:
+                    self.logger.info(f"Peer {msg.peer_id.hex()[0:8]} is not in neighbors, adding it")    
+                    pong_peer = Peer(msg.peer_ip, msg.peer_port, msg.peer_id)
+                    
+                pong_peer.update_state(State.INITIAL, -1, True)
+                self.neighbors.append(pong_peer)
+                self.connected_neighbors += 1
+                self.logger.info(f"Connected to peer {pong_peer.id.hex()[0:8]}")
+            
+            if isinstance(msg, SMR):
+
+                if msg.peer_id in [neighbor.id for neighbor in self.neighbors]:
+                    index = [neighbor.id for neighbor in self.neighbors].index(msg.peer_id)
+                    self.logger.info(f"Peer {self.neighbors[index]} already in neighbors")
+                    if self.neighbors[index].connected is False:
+                        self.neighbors[index].update_state(msg.state, msg.round, True)
+                        self.logger.info(f"Connected peer {self.neighbors[index]}")
+
+                elif msg.peer_id != self.id:
+                    peer = Peer(msg.peer_ip, msg.peer_port, msg.peer_id)
+                    peer.update_state(msg.state, msg.round, True)
+                    self.logger.info(f"Adding new peer: {peer}")
+                    self.neighbors.append(peer)
+                    if (self.send_message(peer.id, SMR(self.ip, self.port, self.id, self.bc.current_round, self.state))) is False:
+                        self.logger.error(f"Failed to send SMR message to peer {peer}, skipping")
+                        self.neighbors.remove(peer)
+                        self.network.forget_peer(peer.id)
+                        continue
+                    self.logger.info(f"sent SMR message to peer {peer}")
+
+            
+            if self.state == State.PROPOSALS:
                 if isinstance(msg, BlockBroadcast):
                     self.handle_new_block(msg.block, msg.peer_id)    
                     self.received_blocks += 1
@@ -357,58 +485,57 @@ class Node:
                     self.logger.info(f"Received forget request from: {msg.peer_id.hex()[0:8]}")
                     self.network.forget_peer(msg.peer_id)
 
-            if self.state == State.RESYNCING:
-                if isinstance(msg, ResyncResponse):
-                    # Store the received blocks
-                    self.received_resync_blocks.insert(0, msg.block_received)
+#            if self.state == State.RESYNCING:
+#                if isinstance(msg, ResyncResponse):
+#                    # Store the received blocks
+#                    self.received_resync_blocks.insert(0, msg.block_received)
+#
+#                    # If the peer doesn't have useful blocks, ask to another random peer
+#                    if not msg.block_received:
+#                        self.received_resync_blocks = []
+#                        if self.missed_blocks:
+#                            missed: tuple[Block, bytes] = random.choice(self.missed_blocks)
+#                            self.missed_blocks.remove(missed)
+#                            request_index = -1
+#                            self.send_message(missed[1], ResyncRequest(self.id, request_index))
+#                        else:
+#                            self.state = State.LISTENING
+#                            self.received_resync_blocks = []
+#                            self.bc.fork_detected = False
+#                            self.logger.info("resync finished unsuccessfully!")
 
-                    # If the peer doesn't have useful blocks, ask to another random peer
-                    if not msg.block_received:
-                        self.received_resync_blocks = []
-                        if self.missed_blocks:
-                            missed: tuple[Block, bytes] = random.choice(self.missed_blocks)
-                            self.missed_blocks.remove(missed)
-                            request_index = -1
-                            self.send_message(missed[1], ResyncRequest(self.id, request_index))
-                        else:
-                            self.state = State.LISTENING
-                            self.received_resync_blocks = []
-                            self.bc.fork_detected = False
-                            self.logger.info("resync finished unsuccessfully!")
+#                    # If the resync is successful, finish the resync
+#                    elif self.bc.merge(self.received_resync_blocks):
+#                        self.state = State.LISTENING
+#                        self.received_resync_blocks = []
+#                        self.bc.fork_detected = False
+#                        self.missed_blocks = []
+#                        self.successfull_resyncs += 1
+#                        self.logger.info("resync completed!")
 
-                    # If the resync is successful, finish the resync
-                    elif self.bc.merge(self.received_resync_blocks):
-                        self.state = State.LISTENING
-                        self.received_resync_blocks = []
-                        self.bc.fork_detected = False
-                        self.missed_blocks = []
-                        self.successfull_resyncs += 1
-                        self.logger.info("resync completed!")
-
-                    # If it is needed to request for more blocks
-                    else:
-                        request_index -= 1
-                        self.send_message(missed[1], ResyncRequest(self.id, request_index))
+#                    # If it is needed to request for more blocks
+#                    else:
+#                        request_index -= 1
+#                        self.send_message(missed[1], ResyncRequest(self.id, request_index))
                           
                 # we need to reply to ResyncRequest in order to avoid a
                 # distributed deadlock
-                if isinstance(msg, ResyncRequest):
-                    peer_id = msg.peer_id
-                    # make sure we only send stuff after the genesis block
-                    # If there are blocks available at this index, send it
-                    if self.bc.number_of_blocks() > abs(msg.block_index):
-                        block_to_send = self.bc.block_by_index(msg.block_index)
-                        self.send_message(peer_id, ResyncResponse(block_to_send))
-                    # Else, send None to signal there are no blocks that match the request
-                    else:
-                        self.send_message(peer_id, ResyncResponse(None))
+#                if isinstance(msg, ResyncRequest):
+#                    peer_id = msg.peer_id
+#                    # make sure we only send stuff after the genesis block
+#                    # If there are blocks available at this index, send it
+#                    if self.bc.number_of_blocks() > abs(msg.block_index):
+#                        block_to_send = self.bc.block_by_index(msg.block_index)
+#                        self.send_message(peer_id, ResyncResponse(block_to_send))
+#                    # Else, send None to signal there are no blocks that match the request
+#                    else:
+#                        self.send_message(peer_id, ResyncResponse(None))
 
-            self.control_number_of_peers()
+
 
     def start(self):
         self.should_halt = False
         self.logger.debug(f"peerlist: {sorted([i.hex()[0:8] for i in self.network.known_peers])}")
-        self.greet_peers()
         self.loop()
 
     def halt(self):

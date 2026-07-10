@@ -44,11 +44,27 @@ class Network:
         self.client = DiscoveryClient(self.beacon_ip, self.beacon_port, self.port, self.id)
 
     def connect(self, peer_ip: str, peer_port: int | str, peer_id: Optional[bytes]=None):
-        self.logger.info(f"connecting to peer {peer_id.hex() if peer_id is not None else '[undefined]'} at tcp://{peer_ip}:{peer_port}")
-        self.socket.connect(f"tcp://{peer_ip}:{peer_port}")
-        if peer_id is not None:
-            self.known_peers.append(peer_id)
-            self.peer_failed_msg_count[peer_id] = 0
+        if peer_id is None:
+            self.logger.error(f"Peer ID is None, cannot connect to peer at tcp://{peer_ip}:{peer_port}")
+            return False
+
+        self.logger.info(f"connecting to peer {peer_id.hex()} at tcp://{peer_ip}:{peer_port}")
+        if (self.socket.connect(f"tcp://{peer_ip}:{peer_port}") is False):
+            self.logger.error(f"Failed to connect to peer at tcp://{peer_ip}:{peer_port}")
+            return False
+        
+        self.known_peers.append(peer_id)
+        self.peer_failed_msg_count[peer_id] = 0
+        
+        return True
+        
+
+    def disconnect(self, peer_ip: str, peer_port: int | str, peer_id: Optional[bytes]=None):
+        self.logger.info(f"disconnecting from peer {peer_id.hex() if peer_id is not None else '[undefined]'} at tcp://{peer_ip}:{peer_port}")
+        self.socket.disconnect(f"tcp://{peer_ip}:{peer_port}")
+        if peer_id is not None and peer_id in self.known_peers:
+            self.known_peers.remove(peer_id)
+            del self.peer_failed_msg_count[peer_id]
 
     # https://github.com/zeromq/pyzmq/issues/1646
     def send(self, peer_id: bytes, msg: bytes):
@@ -60,13 +76,13 @@ class Network:
                 return True
             except Exception as e:
                 self.peer_failed_msg_count[peer_id] += 1 
-                self.logger.error(f"failed to send message to peer {peer_id.hex()[0:8]}, failure number: {self.peer_failed_msg_count[peer_id]}, ({e})")
-                self.logger.error(f"known_peers: {self.known_peers}")
+                self.logger.debug(f"failed to send message to peer {peer_id.hex()[0:8]}, failure number: {self.peer_failed_msg_count[peer_id]}, ({e})")
+                self.logger.debug(f"known_peers: {self.known_peers}")
                 if self.peer_failed_msg_count[peer_id] >= 3:
                     self.forget_peer(peer_id)
                 return False
         else:
-            self.logger.error(f"failed to send message to unknown peer: {peer_id.hex()}")
+            self.logger.debug(f"failed to send message to unknown peer: {peer_id.hex()[0:8]}")
             return False
 
     def read(self, timeout=0) -> Optional[bytes]:

@@ -42,7 +42,6 @@ def main():
     thread.start()
 
     try:
-        node.greet_peers()
         time.sleep(5)
         node.start()
         send_data()
