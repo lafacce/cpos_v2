@@ -115,7 +115,6 @@ class Node:
         self.sent_block_data = 0
 
         self.neighbors: list[Peer] = []
-        self.connected_neighbors = 0
 
 
     # TODO: make the log_dir configurable
@@ -258,8 +257,8 @@ class Node:
 
     def control_number_of_peers(self):
 
-        if self.connected_neighbors < self.minimum_num_peers: 
-            self.logger.info(f"Number of peers too low ({self.connected_neighbors} < {self.minimum_num_peers}), asking more from beacon")
+        if len(self.neighbors) < self.minimum_num_peers: 
+            self.logger.info(f"Number of peers too low ({len(self.neighbors)} < {self.minimum_num_peers}), asking more from beacon")
             additional_peerlist = self.network.get_additional_peers_from_beacon() # peers are randomly selected by beacon and come in a random order
             if additional_peerlist is None:
                 self.logger.error(f"Beacon has returned an empty peerlist")
@@ -302,13 +301,15 @@ class Node:
 
             self.logger.info(f"Neighbors: {len(self.neighbors)} of {self.minimum_num_peers} minimum, {self.maximum_num_peers} maximum")
 
-        
         while len(self.neighbors) > self.maximum_num_peers:
+            random.seed() 
             random_peer = random.sample(self.neighbors, 1)
             self.logger.info(f" Too many peers: {len(self.neighbors)}, forgetting peer: {random_peer[0].id.hex()[0:8]}")
             self.send_message(random_peer[0].id, PeerForgetRequest(self.id))
-            self.network.disconnect(random_peer[0].id, random_peer[0].port, random_peer[0].id)
+        #    self.network.disconnect(random_peer[0].id, random_peer[0].port, random_peer[0].id)
             self.neighbors.remove(random_peer[0])
+            self.logger.info(f"Connected neighbors: {len(self.neighbors)} of {self.minimum_num_peers} minimum, {self.maximum_num_peers} maximum")
+            
 
     def loop(self):
         
@@ -348,6 +349,13 @@ class Node:
 
             now = time.time()
             if self.state == State.INITIAL:
+                if len(self.neighbors) >= self.minimum_num_peers:
+                    self.state = State.INITIALIZING
+                    self.logger.info(f"Node is on state: {self.state.name}")
+                    
+                if (now - last_message_time > 10):
+                    self.logger.info(f"Known peers: {sorted([i.id.hex()[0:8] for i in self.neighbors])}")
+                    last_message_time = now
                 #self.state = State.INITIALIZING
                 #self.logger.info(f"Node is on state: {self.state.name}")
                 #for peer in self.neighbors:
@@ -357,7 +365,7 @@ class Node:
                 #        self.network.forget_peer(peer.id)
                 #        continue
                 #    self.logger.info(f"sent SMR message to peer {peer.id.hex()[0:8]}")
-                last_message_time = now
+                #last_message_time = now
 
             if self.state == State.INITIALIZING and (now - last_message_time > 1):
                 #for peer in self.neighbors:
@@ -405,8 +413,8 @@ class Node:
             if isinstance(msg, Ping):
                 self.logger.info(f"Received Ping from peer {msg.peer_id.hex()[0:8]}")
 
-                if self.connected_neighbors >= self.maximum_num_peers:
-                    self.logger.info(f"Too many peers: {self.connected_neighbors}, ignoring ping from peer {msg.peer_id.hex()[0:8]}")
+                if len(self.neighbors) >= self.maximum_num_peers:
+                    self.logger.info(f"Too many peers: {len(self.neighbors)}, ignoring ping from peer {msg.peer_id.hex()[0:8]}")
                 else:
                     ping_peer = None
                     for aux in self.neighbors:
@@ -424,7 +432,6 @@ class Node:
                         self.logger.error(f"Failed to send Pong to peer {msg.peer_id.hex()[0:8]}")
                     else:
                         self.neighbors.append(ping_peer)
-                        self.connected_neighbors += 1
                         self.logger.info(f"Pong sent to peer {msg.peer_id.hex()[0:8]}")
 
             if isinstance(msg, Pong):
@@ -441,9 +448,17 @@ class Node:
                     
                 pong_peer.update_state(State.INITIAL, -1, True)
                 self.neighbors.append(pong_peer)
-                self.connected_neighbors += 1
                 self.logger.info(f"Connected to peer {pong_peer.id.hex()[0:8]}")
-            
+
+            if isinstance(msg, PeerForgetRequest):
+                self.logger.info(f"Received forget request from: {msg.peer_id.hex()[0:8]}")
+                for aux in self.neighbors:
+                    if msg.peer_id == aux.id:
+                        forget_peer = aux
+                        self.network.forget_peer(msg.peer_id)
+                        self.neighbors.remove(forget_peer)
+                        break
+
             if isinstance(msg, SMR):
 
                 if msg.peer_id in [neighbor.id for neighbor in self.neighbors]:

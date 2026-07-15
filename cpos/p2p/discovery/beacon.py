@@ -96,6 +96,7 @@ class Beacon:
 
             if (isinstance(msg, Hello) or isinstance(msg, PeerListRequest)):
                 count = min(self.num_peers_send, len(self.peers))
+                random.seed() 
                 random_peers = random.sample(self.peers, count)
                 reply = PeerList(random_peers)
                 try:
